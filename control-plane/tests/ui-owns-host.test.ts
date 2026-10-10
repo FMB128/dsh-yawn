@@ -39,6 +39,21 @@ const SEAM_PACKAGE_FILES: ReadonlyArray<[string, RegExp, string]> = [
 
 const require = createRequire(import.meta.url);
 
+/** The file a package's `./client` export serves to the browser. */
+function browserBundle(packageName: string): string {
+  const manifestPath = require.resolve(`${packageName}/package.json`);
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+    exports: Record<string, string | Record<string, string>>;
+  };
+  const client = manifest.exports["./client"];
+  const file =
+    typeof client === "string" ? client : (client?.browser ?? client?.default);
+  if (file === undefined) {
+    throw new Error(`${packageName} exports no "./client" bundle`);
+  }
+  return join(manifestPath, "..", file);
+}
+
 it("is named and shaped like the other rows", () => {
   expect(name).toBe("ui-owns-host");
   expect(typeof apply).toBe("function");
@@ -79,13 +94,7 @@ it("pushes the ownsHost global onto the index injection table", () => {
 
 it("still holds the two seams in the pinned dsh packages", () => {
   for (const [packageName, pattern, diagnosis] of SEAM_PACKAGE_FILES) {
-    const root = join(
-      require.resolve(`${packageName}/package.json`),
-      "..",
-      "lib",
-      "client.js",
-    );
-    const text = readFileSync(root, "utf8");
+    const text = readFileSync(browserBundle(packageName), "utf8");
     expect(pattern.test(text), diagnosis).toBe(true);
   }
 });

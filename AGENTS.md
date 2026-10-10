@@ -12,14 +12,14 @@ READMEs are unusually detailed and precise. Read them directly:
 
 ```sh
 cd "$(mktemp -d)"
-npm pack @deepseek-ai/dsh-base@0.2.0-rc.2
+npm pack @deepseek-ai/dsh-base@0.2.1-rc.1
 tar xzf *.tgz
 # package/README.md is the spec. package/lib/*.js is the built source, which is
 # readable and worth grepping when a README leaves a detail open. A bundle also
 # carries package/cordis.patch.yml, the rows it contributes.
 ```
 
-This repository pins `0.2.0-rc.2`. Match it, because the surface moves between
+This repository pins `0.2.1-rc.1`. Match it, because the surface moves between
 releases.
 
 ### The model
@@ -72,6 +72,12 @@ likely to mislead you.
   directory if it is missing.
 - `shell` is built on top of `subprocess`, so `subprocess` is the seam that
   decides where a command actually runs.
+- Since 0.2.1 the `workingDirectory` service owns each session's current
+  directory: tools take their cwd from it, the model sees it as a "Current
+  working directory" line, and the `working_directory` tool changes it. It
+  starts from the session header's `cwd`, the host anchor, so the
+  `sandbox-working-directory` row wraps the live service to answer in sandbox
+  paths.
 - `tool-fs-search` (`glob`, `grep`) injects `subprocess`, not `fs`, and spawns a
   ripgrep binary resolved from the dsh host's `node_modules`, with the session
   cwd and the model's search root in host coordinates. On its own it cannot

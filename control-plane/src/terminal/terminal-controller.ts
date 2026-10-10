@@ -17,7 +17,7 @@
  * wraps the live instance's methods so those calls run inside
  * `agents.withInitiator(agent, ...)`. A request then reaches the sandbox the
  * way a tool call does: a hibernated sandbox wakes, and the allocation counts
- * as activity for the idle timer. Input and resize additionally reset that
+ * as activity for the idle timer. Accepted input and resize also reset that
  * timer, so a sandbox is not hibernated out from under a terminal someone is
  * typing in. Nothing starts or wakes on a keystroke: if the sandbox is gone,
  * its terminal is too, and the stock controller marks it failed.
@@ -37,8 +37,8 @@ import { symbols, type Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type {
   TerminalController,
-  TerminalAttachmentId,
   TerminalCreateRequest,
+  TerminalFrame,
   WebTerminalId,
 } from "@deepseek-ai/dsh-api-terminal-controller";
 
@@ -50,7 +50,7 @@ type SessionAgents = Pick<Context["agents"], "withInitiator">;
  * awake. Returns the undo.
  * @param controller - the service instance, with any cordis proxy removed.
  * @param agents - the Agent registry whose initiator scope the seam reads.
- * @param noteActivity - session activity sink for input and resize.
+ * @param noteActivity - session activity sink for accepted input and resize.
  */
 export function scopeToSession(
   controller: TerminalController,
@@ -96,36 +96,28 @@ export function scopeToSession(
     },
   );
 
-  // Input and resize are how an open terminal shows use; the request's own
-  // signal owns cancellation, and the allocation already captured its runner.
-  const stockWrite = Reflect.get(controller, "write");
+  // Input and resize are how an open terminal shows use. They arrive on the
+  // `attach` stream's uplink, which the stock method reads from its own Remote
+  // invocation, and each accepted command is answered with an `ack` frame on
+  // the downlink, so an ack without a refusal marks one keystroke or resize
+  // that reached the process. The stream is opened synchronously, so a bad id
+  // still fails the call itself.
+  const stockAttach = Reflect.get(controller, "attach");
   replace(
-    "write",
+    "attach",
     function (
       this: TerminalController,
       agent: Agent,
       id: WebTerminalId,
-      attachmentId: TerminalAttachmentId,
-      data: string,
+      signal: AbortSignal,
     ) {
-      noteActivity(agent);
-      return stockWrite.call(this, agent, id, attachmentId, data);
-    },
-  );
-
-  const stockResize = Reflect.get(controller, "resize");
-  replace(
-    "resize",
-    function (
-      this: TerminalController,
-      agent: Agent,
-      id: WebTerminalId,
-      attachmentId: TerminalAttachmentId,
-      cols: number,
-      rows: number,
-    ) {
-      noteActivity(agent);
-      return stockResize.call(this, agent, id, attachmentId, cols, rows);
+      const frames: AsyncIterable<TerminalFrame> = stockAttach.call(
+        this,
+        agent,
+        id,
+        signal,
+      );
+      return noteInput(frames, () => noteActivity(agent));
     },
   );
 
@@ -134,6 +126,19 @@ export function scopeToSession(
       restore();
     }
   };
+}
+
+/** Pass frames through, calling `onInput` for each accepted input command. */
+async function* noteInput(
+  frames: AsyncIterable<TerminalFrame>,
+  onInput: () => void,
+): AsyncGenerator<TerminalFrame> {
+  for await (const frame of frames) {
+    if (frame.type === "ack" && frame.refusal === undefined) {
+      onInput();
+    }
+    yield frame;
+  }
 }
 
 export const name = "sandbox-terminal-controller";

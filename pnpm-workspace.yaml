@@ -8,7 +8,7 @@ overrides:
   react-dom: 18.2.0
   # One cosmokit everywhere: schemastery's peer otherwise resolves its own
   # 1.8.4 copy, and the duplicate leaks into emitted declaration types.
-  '@deepseek-ai/cosmokit': 1.8.5
+  '@deepseek-ai/cosmokit': 1.8.6
 
 allowBuilds:
   '@bufbuild/buf': true

@@ -136,7 +136,7 @@ RUN set -eux; \
 # patch (control-plane/cordis.patch.yml). Keep the version equal to the dsh pin
 # in control-plane/package.json; a control-plane test asserts it, and a
 # mismatched bootstrap fails the PTC control handshake.
-ARG DSH_PTC_RUNTIME_VERSION=0.2.0-rc.2
+ARG DSH_PTC_RUNTIME_VERSION=0.2.1-rc.1
 RUN set -eux; \
     mkdir -p /opt/dsh-yawn/ptc-runtime-node; \
     cd /tmp; \
