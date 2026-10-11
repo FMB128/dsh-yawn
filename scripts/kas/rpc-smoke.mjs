@@ -105,6 +105,29 @@ try {
     "root file capabilities in a runner command",
   );
 
+  // The pod drops NET_BIND_SERVICE, so the template sysctl has to lower the
+  // port floor. Both probes stay on loopback, needing no egress.
+  console.log("kas-smoke: low ports");
+  const ports = await run(client, [
+    "/bin/bash",
+    "-lc",
+    `set -e
+probe='import socket
+for port in (80, 443):
+    s = socket.socket()
+    s.bind(("127.0.0.1", port))
+    s.close()
+print("bind-ok")'
+test "$(timeout 15 python3 -c "$probe")" = bind-ok
+test "$(printf %s "$probe" | timeout 15 sudo -n python3 -)" = bind-ok
+printf ports-ok`,
+  ]);
+  assertEqual(
+    ports.stdout,
+    "ports-ok",
+    "port 80 and 443 binding in a runner command",
+  );
+
   console.log("kas-smoke: file APIs");
   await client.writeFile({
     path: sentinelPath,
