@@ -21,6 +21,23 @@ reference for its commands and flags, which this skill does not repeat:
 agent-browser skills get core --full
 ```
 
+## Where that reference misleads (0.37.1)
+
+- `batch` takes each command as one quoted string. The reference's JSON-array
+  arguments (`'["open"]'`) are rejected; JSON arrays work only on stdin.
+
+  ```bash
+  agent-browser batch "open https://example.com" "wait --load networkidle" "snapshot -i"
+  ```
+
+- `open` returns before a client-rendered app (React, Vite) mounts, so a
+  `snapshot` straight after it is empty. Run `wait --load networkidle` first.
+- Global flags such as `--session` and `--ignore-https-errors` go before the
+  command; after it they are ignored or rejected.
+- For a local HTTPS site with its own CA, use `--ignore-https-errors`. Do not
+  use `--ca-cert`: only the first command after it works, then each later
+  command relaunches Chrome and loses the page.
+
 ## What this sandbox changes
 
 - The generated wrapper always passes `--no-sandbox`, because the sandbox

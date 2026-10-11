@@ -145,4 +145,23 @@ if (!existsSync(wrapper)) throw new Error(`no wrapper at ${wrapper}`);
 
 const browser = await checkRendering(wrapper, env.LD_LIBRARY_PATH ?? "");
 console.log(`--- browser rendered a page: ${browser}`);
+
+// `agent-browser --ca-cert` creates an NSS database with certutil, found on
+// the PATH the env file sets.
+const nssDir = join("/tmp", `nss-verify-${process.pid}`);
+rmSync(nssDir, { recursive: true, force: true });
+mkdirSync(nssDir, { recursive: true });
+execFileSync(
+  "sh",
+  [
+    "-c",
+    '. "$1" && certutil -N --empty-password -d "sql:$2"',
+    "sh",
+    envFile,
+    nssDir,
+  ],
+  { stdio: "inherit" },
+);
+rmSync(nssDir, { recursive: true, force: true });
+console.log("--- certutil runs from the env file");
 console.log("--- bootstrap verified");
