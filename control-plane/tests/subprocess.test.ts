@@ -1,4 +1,8 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { Duplex, type Readable } from "node:stream";
 
 import { Code, ConnectError } from "@connectrpc/connect";
 import { Context } from "@deepseek-ai/cordis";
@@ -7,7 +11,11 @@ import {
   type SubprocessSpawnSpec,
 } from "@deepseek-ai/dsh-subprocess";
 
-import type { RunnerClient } from "../src/runner-client.js";
+import { bootstrapPathInSandbox } from "../src/ptc/bootstrap.js";
+import type {
+  PtcRunRequestMessage,
+  RunnerClient,
+} from "../src/runner-client.js";
 import { SandboxSubprocessRuntime, testing } from "../src/subprocess.js";
 
 const SESSION_WORKSPACE = "/data/.dsh-yawn/workspace-anchors/owner-repo";
@@ -56,7 +64,49 @@ function fakeRunnerClient(
   } as unknown as RunnerClient;
 }
 
-function runtimeWith(client: RunnerClient): SandboxSubprocessRuntime {
+/**
+ * A runner that answers one PTC run: it records every request message and
+ * echoes each channel write back as a control event, until the caller ends its
+ * request half.
+ */
+function fakePtcRunnerClient(
+  messages: PtcRunRequestMessage[],
+  writes: Array<{ path: string }> = [],
+): RunnerClient {
+  return {
+    resolveExecutable: () => Promise.reject(new Error("not needed")),
+    writeFile: (request: { path: string }) => {
+      writes.push({ path: request.path });
+      return Promise.resolve({
+        created: true,
+        version: "version",
+        hadBefore: false,
+        before: new Uint8Array(),
+      });
+    },
+    ptc: {
+      async *run(request: AsyncIterable<PtcRunRequestMessage>) {
+        for await (const message of request) {
+          messages.push(message);
+          const body = message.message;
+          if (body?.case === "start") {
+            yield { event: { case: "started", value: { pid: 7n } } };
+            continue;
+          }
+          if (body?.case === "control") {
+            yield { event: { case: "control", value: body.value } };
+          }
+        }
+        yield { event: { case: "exited", value: { exitCode: 0, signal: "" } } };
+      },
+    },
+  } as unknown as RunnerClient;
+}
+
+function runtimeWith(
+  client: RunnerClient,
+  sessionWorkspace = SESSION_WORKSPACE,
+): SandboxSubprocessRuntime {
   const ctx = {
     ...new Context(),
     // Prototype methods (effect) do not survive the spread; the runtime only
@@ -68,13 +118,22 @@ function runtimeWith(client: RunnerClient): SandboxSubprocessRuntime {
     },
     agents: {
       requireInitiator: () => ({
-        session: { header: { cwd: SESSION_WORKSPACE } },
+        session: { header: { cwd: sessionWorkspace } },
       }),
     },
   };
   return new SandboxSubprocessRuntime(
     ctx as unknown as ConstructorParameters<typeof SandboxSubprocessRuntime>[0],
   );
+}
+
+/** Read one output stream to its end, the way a consumer does. */
+async function readToEnd(stream: Readable): Promise<number> {
+  let bytes = 0;
+  for await (const chunk of stream as AsyncIterable<Uint8Array>) {
+    bytes += chunk.byteLength;
+  }
+  return bytes;
 }
 
 function spawn(
@@ -233,6 +292,154 @@ describe("sandbox subprocess seam", () => {
     await spawn(runtimeWith(client), { argv: ["rg", "--files"] });
     expect(resolves).toEqual([]);
     expect(requests[0]?.argv).toEqual(["rg", "--files"]);
+  });
+});
+
+describe("sandbox PTC channel", () => {
+  /** Spawn one command that asked for dsh's extra channel. */
+  function spawnWithChannel(
+    runtime: SandboxSubprocessRuntime,
+    overrides: Partial<SubprocessSpawnSpec> = {},
+  ) {
+    const spec: SubprocessSpawnSpec = {
+      argv: [`${SESSION_WORKSPACE}/program`, "--flag"],
+      cwd: SESSION_WORKSPACE,
+      stdio: {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        control: "pipe",
+      },
+      graceMs: 1_000,
+      ...overrides,
+    };
+    return runtime.spawn(spec);
+  }
+
+  it("carries channel bytes both ways over the PTC RPC", async () => {
+    const messages: PtcRunRequestMessage[] = [];
+    const handle = spawnWithChannel(runtimeWith(fakePtcRunnerClient(messages)));
+    const control = handle.control;
+    expect(control).toBeInstanceOf(Duplex);
+
+    const echoed = new Promise<Buffer>((resolve) =>
+      control!.once("data", resolve),
+    );
+    control!.write(Buffer.from("ping"));
+    await expect(echoed).resolves.toEqual(Buffer.from("ping"));
+    // Closing the caller's endpoint ends the request half, and the runner's
+    // exit status still arrives afterwards.
+    control!.end();
+    await expect(handle.done).resolves.toEqual({ exitCode: 0, signal: null });
+
+    expect(messages.map((message) => message.message?.case)).toEqual([
+      "start",
+      "control",
+    ]);
+    // The start message speaks sandbox coordinates like every other spawn.
+    expect(messages[0]?.message?.value).toMatchObject({
+      argv: [`${SANDBOX_WORKSPACE}/program`, "--flag"],
+      cwd: SANDBOX_WORKSPACE,
+    });
+    expect(messages[1]?.message?.value).toEqual(
+      new Uint8Array([112, 105, 110, 103]),
+    );
+  });
+
+  /**
+   * A real provider install under a temporary directory, and the sandbox path
+   * this control plane maps its bootstrap to.
+   */
+  async function mappedBootstrap(): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), "dsh-ptc-"));
+    const directory = join(
+      root,
+      "node_modules",
+      "@deepseek-ai",
+      "dsh-ptc-runtime-node",
+      "lib",
+    );
+    await mkdir(directory, { recursive: true });
+    const source = join(directory, "process.js");
+    await writeFile(source, "bootstrap");
+    const sandbox = bootstrapPathInSandbox(source);
+    if (sandbox === undefined) {
+      throw new Error("the provider's bootstrap is not mapped");
+    }
+    return sandbox;
+  }
+
+  it("leaves a placed bootstrap in sandbox coordinates when the session sits above the workspace", async () => {
+    // A control plane started in `/workspace` gives its sessions that cwd, and
+    // the session-frame rewrite would then move the bootstrap into the
+    // workspace. The child has to be told the path the copy is actually at.
+    const bootstrap = await mappedBootstrap();
+    const messages: PtcRunRequestMessage[] = [];
+    const writes: Array<{ path: string }> = [];
+    const client = {
+      resolveExecutable: () => Promise.reject(new Error("not needed")),
+      writeFile: (request: { path: string }) => {
+        writes.push({ path: request.path });
+        return Promise.resolve({
+          created: true,
+          version: "version",
+          hadBefore: false,
+          before: new Uint8Array(),
+        });
+      },
+      ptc: {
+        async *run(request: AsyncIterable<PtcRunRequestMessage>) {
+          for await (const message of request) {
+            messages.push(message);
+            yield { event: { case: "started", value: { pid: 7n } } };
+            yield {
+              event: { case: "exited", value: { exitCode: 0, signal: "" } },
+            };
+            return;
+          }
+        },
+      },
+    } as unknown as RunnerClient;
+
+    const handle = spawnWithChannel(runtimeWith(client, "/workspace"), {
+      argv: ["node", bootstrap, "67108864"],
+    });
+    await handle.done;
+
+    expect(writes.map((write) => write.path)).toEqual([bootstrap]);
+    expect(messages[0]?.message?.value).toMatchObject({
+      argv: ["node", bootstrap, "67108864"],
+    });
+  });
+
+  it("ends the output pipes when the run never starts", async () => {
+    const messages: PtcRunRequestMessage[] = [];
+    const client = fakePtcRunnerClient(messages);
+    const bootstrap = await mappedBootstrap();
+    // A bootstrap copy the runner refuses, before the run's call is made.
+    (client as unknown as { writeFile: () => Promise<never> }).writeFile = () =>
+      Promise.reject(new Error("write refused"));
+    const handle = spawnWithChannel(runtimeWith(client), {
+      argv: ["node", bootstrap],
+    });
+
+    await expect(handle.done).rejects.toThrow("write refused");
+    // Reading to the end is what a consumer does; a pipe left open hangs here.
+    await expect(readToEnd(handle.stdout!)).resolves.toBe(0);
+    await expect(readToEnd(handle.stderr!)).resolves.toBe(0);
+  });
+
+  it("gives an ordinary spawn no control handle", async () => {
+    const requests: ExecRequest[] = [];
+    const handle = runtimeWith(fakeRunnerClient(requests, [])).spawn({
+      argv: ["/usr/local/bin/rg"],
+      cwd: SANDBOX_WORKSPACE,
+      stdio: { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
+      graceMs: 1_000,
+    });
+    expect(handle.control).toBeUndefined();
+    await expect(handle.done).resolves.toEqual({ exitCode: 0, signal: null });
+    expect(requests).toHaveLength(1);
   });
 });
 

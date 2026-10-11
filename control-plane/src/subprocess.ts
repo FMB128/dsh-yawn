@@ -14,6 +14,9 @@ import {
 } from "@deepseek-ai/dsh-subprocess";
 import type { Context } from "@deepseek-ai/cordis";
 
+import { isMappedBootstrap } from "./ptc/bootstrap.js";
+import { PtcPipe } from "./ptc/pipe.js";
+import type { ExecRequest } from "./gen/dsh/yawn/v1/runner_pb.js";
 import type { RunnerClient } from "./runner-client.js";
 import {
   isInsideSandboxWorkspace,
@@ -143,6 +146,7 @@ class RemoteProcess implements SubprocessHandle {
   private readonly stderrPipe: PassThrough | undefined;
   private readonly stdoutCollection: CollectedBuffer | undefined;
   private readonly stderrCollection: CollectedBuffer | undefined;
+  private readonly ptc: PtcPipe | undefined;
   readonly stdin: Writable | undefined;
   readonly control: Duplex | undefined;
   readonly done: Promise<{
@@ -155,10 +159,10 @@ class RemoteProcess implements SubprocessHandle {
     private readonly spec: SubprocessSpawnSpec,
     private readonly frame: PathFrames,
   ) {
-    if (spec.stdio.control === "pipe") {
-      throw new Error("control pipes are not supported through the sandbox");
-    }
-    this.control = undefined;
+    // A child that asks for the extra channel is dsh's PTC runtime today: the
+    // PTC feature owns the caller's end and the call that reaches it.
+    this.ptc = spec.stdio.control === "pipe" ? new PtcPipe() : undefined;
+    this.control = this.ptc?.channel;
     this.stdin =
       spec.stdio.stdin === "pipe" ? new UnsupportedStdin() : undefined;
     this.stdoutPipe =
@@ -184,7 +188,7 @@ class RemoteProcess implements SubprocessHandle {
         );
       }
     }
-    this.done = this.run(client);
+    this.done = this.run(client).finally(() => this.ptc?.finish());
   }
 
   get pid(): number {
@@ -251,16 +255,21 @@ class RemoteProcess implements SubprocessHandle {
       client,
       environment,
     );
-    const stream = client.exec(
-      {
-        argv,
-        cwd: this.translatedWorkdir(),
-        env: environment,
-        stdin,
-      },
-      { signal: this.controller.signal },
-    );
+    const request: Omit<ExecRequest, "$typeName"> = {
+      argv,
+      cwd: this.translatedWorkdir(),
+      env: environment,
+      stdin,
+    };
     try {
+      // A PTC run keeps its request half open for channel bytes; a plain command
+      // sends its one request message and ends the stream. Starting one can fail
+      // — a bootstrap that cannot be placed, a channel the caller closed — and
+      // the pipes close either way.
+      const stream =
+        this.ptc === undefined
+          ? client.exec(request, { signal: this.controller.signal })
+          : await this.ptc.start(client, request, this.controller.signal);
       for await (const response of stream) {
         if (response.event.case === "started") {
           this.processId = Number(response.event.value.pid);
@@ -268,6 +277,8 @@ class RemoteProcess implements SubprocessHandle {
           this.writeOutput("stdout", response.event.value);
         } else if (response.event.case === "stderr") {
           this.writeOutput("stderr", response.event.value);
+        } else if (response.event.case === "control") {
+          this.ptc?.deliver(response.event.value);
         } else if (response.event.case === "exited") {
           return {
             exitCode:
@@ -312,11 +323,17 @@ class RemoteProcess implements SubprocessHandle {
    */
   private translatedArgv(): string[] {
     return this.spec.argv.map((argument) =>
-      pathInSandbox(
-        argument,
-        this.frame.sessionWorkspace,
-        this.frame.sandboxWorkspace,
-      ),
+      // A bootstrap the PTC feature placed is already in sandbox coordinates.
+      // Session anchors can themselves sit above the workspace (a control plane
+      // started in `/workspace` is one), and the rewrite would send the child to
+      // a copy that is not there.
+      isMappedBootstrap(argument)
+        ? argument
+        : pathInSandbox(
+            argument,
+            this.frame.sessionWorkspace,
+            this.frame.sandboxWorkspace,
+          ),
     );
   }
 

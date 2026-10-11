@@ -61,6 +61,8 @@ try {
     throw new Error(`sudo did not reach root: ${sudoUid}`);
   }
 
+  await assertPtcPipe(client);
+
   // The browser is deliberately not in the image; `install-browser`, which the
   // image does carry, adds it on demand. This runs that command for real and
   // then proves Chrome renders a page, so a broken installer or a missing
@@ -479,4 +481,99 @@ async function run(client, argv, cwd = "/workspace") {
   }
   if (!exited) throw new Error("command stream ended without an exit status");
   return stdout;
+}
+
+/**
+ * Drive one PTC run through a real sandbox. The child adopts file descriptor 7
+ * the way `openInheritedControlChannel()` does and echoes what it reads, which
+ * proves the descriptor, the launch marker, and both directions of the channel
+ * together. The PTC runtime's own bootstrap is placed by the control plane when
+ * a session runs a program, so this asserts the channel that bootstrap depends
+ * on rather than the file itself.
+ */
+async function assertPtcPipe(client) {
+  const program = [
+    'import { Socket } from "node:net";',
+    "const stream = new Socket({",
+    "  fd: 7,",
+    "  readable: true,",
+    "  writable: true,",
+    "  allowHalfOpen: true,",
+    "});",
+    "console.log(`marker:${process.env.DSH_SUBPROCESS_CONTROL}`);",
+    'stream.on("data", (chunk) => stream.write(chunk));',
+    'stream.write("ready\\n");',
+    "",
+  ].join("\n");
+  await client.writeFile({
+    path: "/tmp/ptc-pipe-smoke.mjs",
+    content: new TextEncoder().encode(program),
+    guard: { case: "createIfAbsent", value: true },
+  });
+
+  const toSend = [];
+  let wake;
+  const requests = (async function* () {
+    yield {
+      message: {
+        case: "start",
+        value: {
+          argv: ["node", "/tmp/ptc-pipe-smoke.mjs"],
+          cwd: "/workspace",
+          env: {},
+          stdin: new Uint8Array(),
+        },
+      },
+    };
+    while (true) {
+      if (toSend.length === 0) {
+        await new Promise((resolve) => {
+          wake = resolve;
+        });
+      }
+      yield { message: { case: "control", value: toSend.shift() } };
+    }
+  })();
+  const send = (text) => {
+    toSend.push(new TextEncoder().encode(text));
+    wake?.();
+    wake = undefined;
+  };
+
+  const decoder = new TextDecoder();
+  let stdout = "";
+  let stderr = "";
+  let control = "";
+  let asked = false;
+  for await (const response of client.ptc.run(requests)) {
+    if (response.event.case === "stdout") {
+      stdout += decoder.decode(response.event.value);
+    }
+    if (response.event.case === "stderr") {
+      stderr += decoder.decode(response.event.value);
+    }
+    if (response.event.case === "control") {
+      control += decoder.decode(response.event.value);
+      if (!asked && control.includes("ready\n")) {
+        asked = true;
+        send("ping");
+      }
+      if (control.includes("ping")) {
+        // The echo arrived. Ending the call is the termination the PTC runtime
+        // performs once its program has settled.
+        break;
+      }
+    }
+  }
+  if (!stdout.includes("marker:pipe")) {
+    throw new Error(
+      `the child did not inherit the PTC marker: stdout=${JSON.stringify(stdout)} stderr=${JSON.stringify(stderr)}`,
+    );
+  }
+  if (!control.includes("ping")) {
+    throw new Error(
+      `the PTC channel did not echo: control=${JSON.stringify(control)} stderr=${JSON.stringify(stderr)}`,
+    );
+  }
+  process.stdout.write("ptc pipe: ok\n");
 }

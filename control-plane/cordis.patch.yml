@@ -48,6 +48,18 @@
 - id: sandbox-policy
   disabled: true
 
+# The PTC Node backend runs its bootstrap and its programs inside the sandbox,
+# so it must resolve the Node executable there. Left alone it uses the control
+# plane's own `process.execPath`, a host path that exists in a sandbox only when
+# the two images happen to place Node identically; the bare name is resolved on
+# the sandbox's own PATH. Its bootstrap needs no row here: the provider asks the
+# filesystem service to map that file into the execution world, and the PTC
+# feature copies it in (see src/ptc/bootstrap.ts).
+- id: ptc-runtime
+  name: '@deepseek-ai/dsh-ptc-runtime-node'
+  config:
+    nodeExecutable: node
+
 # The Web right sidebar's Files and Preview tabs, and the deliverables cards
 # under each turn, read through `workspace-files`, which serves the browser
 # from plain HTTP requests outside any agent turn. This package's filesystem

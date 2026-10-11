@@ -25,6 +25,7 @@ import {
   collectFileAttachments,
   type FileAttachmentRef,
 } from "./attachment-copies.js";
+import { bootstrapPathInSandbox } from "./ptc/bootstrap.js";
 import { FileType } from "./gen/dsh/yawn/v1/runner_pb.js";
 import { pathInSandbox } from "./sandbox-path.js";
 
@@ -94,13 +95,16 @@ export class SandboxFileSystem extends FileSystem {
   }
 
   /**
-   * Map a host attachment path to the copy this request already placed in the
-   * sandbox. Synchronous by contract and called during request assembly, so
-   * it never does I/O and never throws; an unknown path stays unmapped and
-   * the model keeps dsh's placeholder for it.
+   * Map a host file this backend placed in the sandbox: the attachment copy a
+   * request already made, or the PTC bootstrap copied in before the program that
+   * needs it starts. Synchronous by contract and called
+   * during request assembly, so it never does I/O and never throws; an unknown
+   * path stays unmapped and the caller keeps its own placeholder for it.
    */
   processPathFromHostPath(hostPath: string): string | undefined {
-    return this.attachmentCopies.lookup(hostPath);
+    return (
+      this.attachmentCopies.lookup(hostPath) ?? bootstrapPathInSandbox(hostPath)
+    );
   }
 
   contains(parent: FsTarget, child: FsTarget): boolean {

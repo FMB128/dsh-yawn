@@ -284,6 +284,40 @@ The sandbox has no such launcher, so every `minimal` command failed with ENOENT;
 answering full access is what keeps the preset working. The shell still runs in
 the sandbox, through this seam, like every other command.
 
+The shipped `ptc` agent preset replaces direct tool calls with programs the
+model writes, and `@deepseek-ai/dsh-ptc-runtime-node` runs each program in a
+fresh Node child. That child has to be a process in the sandbox, and the
+provider speaks its protocol over the extra byte channel dsh's subprocess
+interface offers as `stdio.control: 'pipe'` — a socket at the child's file
+descriptor 7, which no caller on the dsh host can create inside a sandbox. The
+feature is therefore its own package, built the way the terminal one is and just
+as removable, and named for what it serves rather than for the interface it
+implements: `ptc.proto` declares a bidirectional `PtcService` on the runner's
+tunnel, `runner/ptc` owns the sandbox half, and `src/ptc/` owns the control
+plane's. Nothing in it allocates a PTY, and no one types into it. The runner
+owns the child's end — a Unix socket pair, the descriptor laid out at fd 7,
+`DSH_SUBPROCESS_CONTROL=pipe` in the environment — and relays bytes both ways
+beside the command's output and exit status. `subprocess.ts` hands a spawn that
+asked for the channel to `PtcPipe` the way it hands a terminal to
+`TerminalPool`; deleting the three pieces and their handoffs — one line each in
+`subprocess.ts`, `fs.ts`, `runner-client.ts`, `main.go` — removes the feature and
+leaves every other command untouched.
+
+The provider finds its bootstrap through `ctx.fs.processPathFromHostPath`, dsh's
+hook for mapping an absolute host file into the execution world, and its own
+copy is a control-plane path no sandbox has. The control plane answers that hook
+with a path under the workspace volume's bookkeeping directory — beside the
+runner's apt cache and outside the checkout, so it never shows up as an
+untracked file in a session's work — and
+copies the file in before the program that needs it starts. The bytes come from
+the control plane's own installed package on every run, so a sandbox that
+outlives a control-plane upgrade cannot keep running the release it was given
+first. The command's Node executable is resolved in the sandbox as well, through
+the `ptc-runtime` row's bare `node`: the provider's default is the control
+plane's own `process.execPath`, which a sandbox has only by coincidence. The
+Docker smoke test drives a real run through the channel, because only a sandbox
+proves the descriptor and the marker.
+
 The header's **Open in...** button (`open-in-app`, `ui-open-in-app`) is off:
 it launches a desktop application on the host against the session `cwd`.
 That `cwd` is the anchor, and the application probe would run through the
