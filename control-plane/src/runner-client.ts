@@ -3,6 +3,7 @@ import type { Duplex } from "node:stream";
 import { createClient, type Client } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-node";
 
+import { PtcService } from "./gen/dsh/yawn/v1/ptc_pb.js";
 import { TerminalService } from "./gen/dsh/yawn/v1/terminal_pb.js";
 import {
   RunnerService,
@@ -20,6 +21,7 @@ import {
 } from "./gen/dsh/yawn/v1/runner_pb.js";
 
 type GeneratedClient = Client<typeof RunnerService>;
+type PtcClient = Client<typeof PtcService>;
 type CallOptions = { signal?: AbortSignal; timeoutMs?: number };
 
 /** One message of a proxied request stream, in the shape the client accepts. */
@@ -27,6 +29,10 @@ export type HttpProxyRequestMessage =
   Parameters<GeneratedClient["httpProxy"]>[0] extends AsyncIterable<infer M>
     ? M
     : never;
+
+/** One message of a PTC run's request stream. */
+export type PtcRunRequestMessage =
+  Parameters<PtcClient["run"]>[0] extends AsyncIterable<infer M> ? M : never;
 
 /** A small facade keeps generated RPC details out of dsh capability adapters. */
 export class RunnerClient {
@@ -37,6 +43,11 @@ export class RunnerClient {
      * terminal feature is its only user (see `proto/dsh/yawn/v1/terminal.proto`).
      */
     readonly terminals: Client<typeof TerminalService>,
+    /**
+     * PTC mode's service. It shares this connection, and the sandbox PTC
+     * feature is its only user (see `proto/dsh/yawn/v1/ptc.proto`).
+     */
+    readonly ptc: Client<typeof PtcService>,
   ) {}
 
   health(options?: CallOptions) {
@@ -159,5 +170,6 @@ export function runnerClientForSocket(socket: Duplex): RunnerClient {
   return new RunnerClient(
     createClient(RunnerService, transport),
     createClient(TerminalService, transport),
+    createClient(PtcService, transport),
   );
 }

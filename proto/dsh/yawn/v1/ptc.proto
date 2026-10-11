@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package dsh.yawn.v1;
+
+option go_package = "github.com/zhming0/dsh-yawn/runner/gen/dsh/yawn/v1;yawnv1";
+
+// PTC mode's surface inside one sandbox, kept apart from RunnerService and from
+// the terminal service so the whole feature is one file here, one package in the
+// runner, and one folder in the control plane: removing those and their
+// handoffs removes the feature. A runner serves this on the same tunnel as
+// RunnerService.
+//
+// This is not a terminal. Nothing here allocates a PTY, and no one types into
+// it: dsh's PTC runtime runs a program the model wrote and speaks its own
+// protocol to it over the byte channel below.
+service PtcService {
+  // Run one program's process with a byte channel to it: the first request
+  // starts the command, later requests are bytes for that channel, and the
+  // responses add the bytes the command writes back. See RunRequest for the
+  // exact child contract.
+  rpc Run(stream RunRequest) returns (stream RunResponse);
+}
+
+// Where and how to start the command. The runner owns the child's end of the
+// channel: it creates a socket pair, passes one end as file descriptor 7, and
+// sets DSH_SUBPROCESS_CONTROL=pipe in the child's environment, which is what
+// dsh's `openInheritedControlChannel()` consumes. A request that tries to set
+// that variable itself is refused, because the provider owns the descriptor.
+message RunStart {
+  repeated string argv = 1;
+  string cwd = 2;
+  map<string, string> env = 3;
+  bytes stdin = 4;
+}
+
+// One message of a PTC run. The first must be `start`; every later one is one
+// chunk of channel bytes, written to the child's fd 7 in the order sent. Ending
+// the request half half-closes that channel — the child reads end-of-file on
+// fd 7 — and does not terminate the command, which keeps running until it exits
+// or the call is cancelled.
+message RunRequest {
+  oneof message {
+    RunStart start = 1;
+    bytes control = 2;
+  }
+}
+
+// One event of a PTC run: the command's output and exit status, plus the bytes
+// it wrote to fd 7.
+message RunResponse {
+  oneof event {
+    RunStarted started = 1;
+    bytes stdout = 2;
+    bytes stderr = 3;
+    RunExited exited = 4;
+    bytes control = 5;
+  }
+}
+
+message RunStarted {
+  int64 pid = 1;
+}
+
+message RunExited {
+  int32 exit_code = 1;
+  string signal = 2;
+}

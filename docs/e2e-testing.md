@@ -216,6 +216,21 @@ example `standard` and `large`, both with `image: dsh-yawn-runner:dev`.
    with no entry left in `pendingProfiles`.
 4. Confirm the chip is now disabled and keeps showing the picked profile.
 
+### PTC mode
+
+For changes to the PTC channel, the `ptc-runtime` row, or the bootstrap the
+runner image ships. The Docker smoke test already drives a run through the
+channel; this scenario proves the whole path from a session.
+
+1. Start a session, open the composer's preset picker, and select **ptc**.
+2. Ask the model to use `run_code` to print the sandbox's hostname and working
+   directory, and to write a uniquely named file and read it back.
+3. The tool result must show the sandbox's hostname, not the host's. From the
+   host, `docker exec <container> cat /workspace/repository/<file>` must show
+   the same content, and
+   `docker exec <container> ls -l /opt/dsh-yawn/ptc-runtime-node/process.js`
+   must show the bootstrap the image ships.
+
 ### Sandbox web previews
 
 For changes to the preview listener, the relay, or the preview surfaces. Give

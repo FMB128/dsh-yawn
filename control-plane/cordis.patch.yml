@@ -48,6 +48,18 @@
 - id: sandbox-policy
   disabled: true
 
+# The PTC Node backend runs its bootstrap and its programs inside the sandbox, so
+# both paths have to name the sandbox's own copies. Left alone the provider uses
+# its own bootstrap — a control-plane path no sandbox has — and the control
+# plane's `process.execPath`, which exists in a sandbox only by coincidence. The
+# runner image ships the compatible bootstrap; a control-plane test keeps its
+# version equal to the dsh pin (see runner/Dockerfile).
+- id: ptc-runtime
+  name: '@deepseek-ai/dsh-ptc-runtime-node'
+  config:
+    nodeExecutable: node
+    bootstrapPath: /opt/dsh-yawn/ptc-runtime-node/process.js
+
 # The Web right sidebar's Files and Preview tabs, and the deliverables cards
 # under each turn, read through `workspace-files`, which serves the browser
 # from plain HTTP requests outside any agent turn. This package's filesystem

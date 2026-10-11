@@ -95,6 +95,15 @@ The CLI sits in `/opt/agent-browser` and is linked onto `PATH`, outside both
 `$HOME` and `/workspace`, because a session mounts its workspace volume over
 `/workspace` and would otherwise hide it.
 
+The image also carries the PTC Node backend's bootstrap in
+`/opt/dsh-yawn/ptc-runtime-node/process.js`. dsh's PTC mode runs model-written
+programs in a fresh Node child inside the sandbox, the provider resolves that
+file in the execution world, and its own copy is a path no sandbox has — so the
+pinned copy ships here and the control plane's bundle patch names it. Keep the
+Dockerfile's `DSH_PTC_RUNTIME_VERSION` equal to the dsh pin in
+`control-plane/package.json`: a control-plane test asserts it, and a bootstrap
+from another release fails the control handshake.
+
 Releases are published to `ghcr.io/zhming0/dsh-yawn-runner`, tagged with the same
 version as the `@zhming0/dsh-yawn` package that expects them.
 

@@ -130,6 +130,22 @@ RUN set -eux; \
       'Dir::Cache::Archives "/workspace/.dsh-yawn/apt-cache/";' \
       'APT::Keep-Downloaded-Packages "true";' \
       > /etc/apt/apt.conf.d/90-dsh-yawn
+# The PTC Node backend runs its bootstrap inside the sandbox: the provider
+# resolves that file in the execution world, and its own copy is a control-plane
+# path no sandbox can see. Ship the pinned copy here and name it in the bundle
+# patch (control-plane/cordis.patch.yml). Keep the version equal to the dsh pin
+# in control-plane/package.json; a control-plane test asserts it, and a
+# mismatched bootstrap fails the PTC control handshake.
+ARG DSH_PTC_RUNTIME_VERSION=0.2.0-rc.2
+RUN set -eux; \
+    mkdir -p /opt/dsh-yawn/ptc-runtime-node; \
+    cd /tmp; \
+    tarball="$(npm pack "@deepseek-ai/dsh-ptc-runtime-node@${DSH_PTC_RUNTIME_VERSION}")"; \
+    tar -xzf "${tarball}" -C /opt/dsh-yawn/ptc-runtime-node --strip-components=2 package/lib/process.js; \
+    rm -f "${tarball}"; \
+    cp /opt/dsh-yawn/ptc-runtime-node/process.js /tmp/ptc-bootstrap.mjs; \
+    node --check /tmp/ptc-bootstrap.mjs; \
+    rm -f /tmp/ptc-bootstrap.mjs
 # The setup marker lives on the machine's own filesystem, not on the workspace
 # volume, so a machine rebuilt around the surviving volume runs the repository's
 # setup again. The sandbox user writes the marker; see markerPath in
