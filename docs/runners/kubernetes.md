@@ -176,7 +176,9 @@ Each sandbox pod has two containers:
 - **runner** — runs as UID 1000, serves the file, shell, and subprocess RPCs,
   and holds the session's tools. It has `allowPrivilegeEscalation: true` and a
   small set of capabilities so apt, dpkg, and sudo can install system packages.
-  Seccomp stays `RuntimeDefault`.
+  Seccomp stays `RuntimeDefault`. The pod lowers
+  `net.ipv4.ip_unprivileged_port_start` to 0, as Docker does, so a session
+  binds ports 80 and 443 without a capability.
 - **docker** — a rootless Docker daemon sidecar. The runner's Docker CLI talks
   to it over a shared socket, so sessions can run `docker build` and
   `docker run` without access to the node's Docker daemon.

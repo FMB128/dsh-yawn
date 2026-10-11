@@ -72,6 +72,12 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+        # Docker lowers this in its containers; this pod keeps 1024 and drops
+        # NET_BIND_SERVICE, so without it even sudo's root cannot bind 80 or
+        # 443. It grants no capability, only moves the floor in this netns.
+        sysctls:
+          - name: net.ipv4.ip_unprivileged_port_start
+            value: "0"
       containers:
         - name: runner
           image: ghcr.io/zhming0/dsh-yawn-runner
