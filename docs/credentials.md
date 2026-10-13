@@ -35,6 +35,26 @@ repositories fail at `git clone`. A workspace-scoped token serves that
 workspace's clones instead of the global one, so two Workspaces can use two
 tokens.
 
+## Other forges
+
+Any other host is served by a secret named after it: the hostname uppercased
+with `.` written as `_`, ending in `_TOKEN`. `GIT_EXAMPLE_COM_TOKEN` is the
+credential for `git.example.com`, `GITLAB_COM_TOKEN` for `gitlab.com`. Git
+receives it over the same socket, under the username `oauth2`, which every
+common forge accepts with a token as the password.
+
+This is what makes a Workspace whose own repository is on another forge clone
+at all: the control plane pushes the credential before it runs the clone, not
+only before the session's commands. The name does not have to match the
+workspace's host — a session anywhere can clone from any host it has a token
+for — and a workspace-scoped secret overrides the global one, exactly like
+`GITHUB_TOKEN`.
+
+A name with no `_` before `_TOKEN` (`NPM_TOKEN`) spells no host and stays a
+plain secret. A hostname that contains a hyphen (`my-git.example.com`) has no
+spelling here, because an environment name cannot hold one; set the credential
+in the sandbox's own Git config instead.
+
 ## Set a secret
 
 Secrets go in through the Web UI: **Settings → Secrets**. It is the only way

@@ -9,6 +9,7 @@ import {
 import type { SettingsSectionOwnerProps } from "@deepseek-ai/dsh-client-ui-settings/client";
 
 import type { SecretSettingsView } from "../secrets-remote.js";
+import { hostFromTokenSecretName } from "../secret-hosts.js";
 import { GLOBAL_SCOPE, ScopeSelector } from "./scope-selector.js";
 import {
   addButtonStyle,
@@ -355,6 +356,11 @@ function SecretDialog({
     }
     if (trimmed === "GITHUB_TOKEN") {
       hints.push("Also used as the Git credential for github.com.");
+    } else {
+      const host = hostFromTokenSecretName(trimmed);
+      if (host !== undefined) {
+        hints.push(`Also used as the Git credential for ${host}.`);
+      }
     }
   }
 

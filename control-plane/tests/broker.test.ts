@@ -76,6 +76,82 @@ describe("credential broker", () => {
     ]);
   });
 
+  it("serves host-shaped token secrets as credentials for other forges", async () => {
+    const broker = new CredentialBroker({
+      path: join(directory, "broker.json"),
+    });
+    await broker.initialize();
+    await broker.setSecret(
+      GLOBAL_SECRET_SCOPE,
+      "GIT_EXAMPLE_COM_TOKEN",
+      "forge-pat",
+    );
+    await broker.setSecret(
+      GLOBAL_SECRET_SCOPE,
+      "GITLAB_COM_TOKEN",
+      "gitlab-pat",
+    );
+    await broker.setSecret(
+      GLOBAL_SECRET_SCOPE,
+      "codeberg_org_token",
+      "code-pat",
+    );
+    // Names that do not spell a multi-label host stay plain secrets.
+    await broker.setSecret(GLOBAL_SECRET_SCOPE, "NPM_TOKEN", "npm-token");
+    await broker.setSecret(GLOBAL_SECRET_SCOPE, "NOT_A_TOKEN_NAME", "other");
+
+    expect(
+      await broker.gitCredentials("https://git.example.com/example/repo"),
+    ).toEqual([
+      { host: "git.example.com", username: "oauth2", password: "forge-pat" },
+      { host: "gitlab.com", username: "oauth2", password: "gitlab-pat" },
+      { host: "codeberg.org", username: "oauth2", password: "code-pat" },
+    ]);
+  });
+
+  it("keeps one credential per host and prefers the workspace scope", async () => {
+    const broker = new CredentialBroker({
+      path: join(directory, "broker.json"),
+    });
+    await broker.initialize();
+    const repository = "https://git.example.com/example/repo";
+    await broker.setSecret(GLOBAL_SECRET_SCOPE, "GITHUB_TOKEN", "pat-value");
+    await broker.setSecret(
+      GLOBAL_SECRET_SCOPE,
+      "GIT_EXAMPLE_COM_TOKEN",
+      "global-forge",
+    );
+    // A spelling of github.com that would otherwise add a second entry.
+    await broker.setSecret(GLOBAL_SECRET_SCOPE, "GITHUB_COM_TOKEN", "shadowed");
+    await broker.setSecret(
+      workspace(repository),
+      "GIT_EXAMPLE_COM_TOKEN",
+      "workspace-forge",
+    );
+
+    expect(await broker.gitCredentials(repository)).toEqual([
+      {
+        host: "github.com",
+        username: "x-access-token",
+        password: "pat-value",
+      },
+      {
+        host: "git.example.com",
+        username: "oauth2",
+        password: "workspace-forge",
+      },
+    ]);
+    // Another workspace gets the global forge token, not this one's.
+    expect(await broker.gitCredentials("https://gitlab.com/a/b")).toEqual([
+      {
+        host: "github.com",
+        username: "x-access-token",
+        password: "pat-value",
+      },
+      { host: "git.example.com", username: "oauth2", password: "global-forge" },
+    ]);
+  });
+
   it("scopes secrets per workspace with same-name override", async () => {
     const broker = new CredentialBroker({
       path: join(directory, "broker.json"),

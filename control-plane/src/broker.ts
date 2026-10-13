@@ -1,6 +1,8 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
+import { hostFromTokenSecretName } from "./secret-hosts.js";
+
 interface BrokerFile {
   version: 2;
   /** The global scope, delivered to every sandbox. */
@@ -111,21 +113,43 @@ export class CredentialBroker {
    * token (fine-grained PAT or `gh auth token`) is the whole GitHub setup. A
    * workspace-scoped token serves that workspace's clones. The workspace's own
    * host does not matter: a session in any workspace may clone from GitHub.
+   *
+   * Every other host is served by a host-shaped secret: the hostname
+   * uppercased with `.` written as `_`, plus `_TOKEN`. `GIT_EXAMPLE_COM_TOKEN`
+   * supplies git.example.com, `GITLAB_COM_TOKEN` supplies gitlab.com. The
+   * workspace's own host is not special either, so a session can clone from
+   * any forge it holds a token for. One credential per host: the github.com
+   * entry wins, then the first host name in the merged scope.
    */
   async gitCredentials(
     repositoryUrl: string,
   ): Promise<Array<{ host: string; username: string; password: string }>> {
     // Read through the merge, so scope precedence has one definition.
-    const token = this.secrets({
-      kind: "workspace",
-      repositoryUrl,
-    })["GITHUB_TOKEN"];
-    if (token === undefined) {
-      return [];
+    const secrets = this.secrets({ kind: "workspace", repositoryUrl });
+    const credentials: Array<{
+      host: string;
+      username: string;
+      password: string;
+    }> = [];
+    const hosts = new Set<string>();
+    const githubToken = secrets["GITHUB_TOKEN"];
+    if (githubToken !== undefined) {
+      credentials.push({
+        host: "github.com",
+        username: "x-access-token",
+        password: githubToken,
+      });
+      hosts.add("github.com");
     }
-    return [
-      { host: "github.com", username: "x-access-token", password: token },
-    ];
+    for (const [name, password] of Object.entries(secrets)) {
+      const host = hostFromTokenSecretName(name);
+      if (host === undefined || hosts.has(host)) {
+        continue;
+      }
+      credentials.push({ host, username: "oauth2", password });
+      hosts.add(host);
+    }
+    return credentials;
   }
 
   /** The names stored in one scope, before the global merge. */
