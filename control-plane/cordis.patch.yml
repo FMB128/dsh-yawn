@@ -183,3 +183,16 @@
     # browser". Same wait-not-inject shape as the row above.
     - id: ui-owns-host
       name: '@zhming0/dsh-yawn/owns-host'
+
+    # The control plane mounts MCP servers once at the host root, so their
+    # tools join the global registry and every agent inherits them. The
+    # `minimal` preset is a complete-persona agent with a single persistent
+    # shell, and the whole point of it is that tiny tool set; MCP schemas
+    # would fill it back up. This row keeps the shared mounts and denies MCP
+    # tools on the agents of the listed presets, recomputing the exact-name
+    # deny list whenever the registry changes. Remove a preset id to let its
+    # sessions see MCP tools again.
+    - id: mcp-tool-exclusion
+      name: '@zhming0/dsh-yawn/mcp-tool-exclusion'
+      config:
+        excludedPresets: [minimal]

@@ -35,6 +35,12 @@ For dsh plugin internals and implementation notes, see
   control-plane process with the control plane's access to sessions and
   credentials.
 
+MCP servers are shared by every session that can use tools, with one
+exception: the stock `minimal` preset is a persona and a persistent shell, so
+the `mcp-tool-exclusion` row keeps MCP tools out of it. The excluded presets
+are the row's `excludedPresets` list (default `[minimal]`); an empty list
+turns the exclusion off.
+
 ## What changes for the agent
 
 The tools keep their names, schemas, and prompt guidance; only where they run

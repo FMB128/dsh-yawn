@@ -39,6 +39,10 @@
       "types": "./dist/skills.d.ts",
       "default": "./dist/skills.js"
     },
+    "./mcp-tool-exclusion": {
+      "types": "./dist/mcp-tool-exclusion.d.ts",
+      "default": "./dist/mcp-tool-exclusion.js"
+    },
     "./sandbox-context": {
       "types": "./dist/sandbox-context.d.ts",
       "default": "./dist/sandbox-context.js"

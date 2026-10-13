@@ -188,6 +188,21 @@ the only way back short of a restart. A name may not contain `__` or end in
 configuration lives in `stateDir/mcp.json`, owner-only like the rest of the
 control plane's state, and never in a sandbox.
 
+The same mount puts every server's tools into every agent, including the
+stock `minimal` preset, whose composition is a complete persona and one
+persistent shell. The bundle's `mcp-tool-exclusion` row keeps the shared
+mounts and denies the MCP tool names (`mcp__*` and `dsh-mcp-resources`' three
+shared tools) on the agents of the presets listed in its `excludedPresets`
+config (default `[minimal]`). It reads the preset id from the session header,
+calls `tools.restrict` inside `agent.ctx` so the mask is that agent's alone,
+and recomputes the exact-name deny list on every `tools/change` — a server
+added, removed, reconnected, or changing its tool list updates live sessions
+without a restart. `minimal`'s persona is `complete`, so the MCP prompt
+sections are dropped by the assembly anyway; the row only needs to hide the
+schemas. An excluded preset without a complete persona would still assemble
+the `mcp-resource-servers` section, so the config is meant for shell-only
+compositions.
+
 The bundle also disables dsh's local shell permission presets and its file
 policy line. The remote shell uses one fixed container boundary and does not
 claim to enforce those per-command sandbox modes. Both halves of the preset
