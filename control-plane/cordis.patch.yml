@@ -201,9 +201,11 @@
     # `minimal` preset is a complete-persona agent with a single persistent
     # shell, and the whole point of it is that tiny tool set; MCP schemas
     # would fill it back up. This row keeps the shared mounts and denies MCP
-    # tools on the agents of the listed presets, recomputing the exact-name
-    # deny list whenever the registry changes. Remove a preset id to let its
-    # sessions see MCP tools again.
+    # tools on the agents whose live preset is in the list, following the
+    # agent-preset registry rather than the creation header, so a blank
+    # session switched to `minimal` in the Web UI is covered too. It
+    # recomputes the exact-name deny list whenever the registry changes.
+    # Remove a preset id to let its sessions see MCP tools again.
     - id: mcp-tool-exclusion
       name: '@zhming0/dsh-yawn/mcp-tool-exclusion'
       config:

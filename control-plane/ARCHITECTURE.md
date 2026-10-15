@@ -192,12 +192,17 @@ The same mount puts every server's tools into every agent, including the
 stock `minimal` preset, whose composition is a complete persona and one
 persistent shell. The bundle's `mcp-tool-exclusion` row keeps the shared
 mounts and denies the MCP tool names (`mcp__*` and `dsh-mcp-resources`' three
-shared tools) on the agents of the presets listed in its `excludedPresets`
-config (default `[minimal]`). It reads the preset id from the session header,
-calls `tools.restrict` inside `agent.ctx` so the mask is that agent's alone,
-and recomputes the exact-name deny list on every `tools/change` — a server
-added, removed, reconnected, or changing its tool list updates live sessions
-without a restart. `minimal`'s persona is `complete`, so the MCP prompt
+shared tools) on the agents whose live composition is one of the presets
+listed in its `excludedPresets` config (default `[minimal]`). It reads that
+live preset from the agent-preset registry (`composedPreset`), not the session
+header: the header records only the preset the session started with, while
+the Web UI picks a preset for a blank session through `agentPresets.select`,
+which rebinds the composition and emits `tools/change`. The row calls
+`tools.restrict` inside `agent.ctx` so the mask is that agent's alone,
+re-reads every live agent's preset on each `tools/change`, and recomputes the
+exact-name deny list there too — a switched preset or a server added, removed,
+reconnected, or changing its tool list updates live sessions without a
+restart. `minimal`'s persona is `complete`, so the MCP prompt
 sections are dropped by the assembly anyway; the row only needs to hide the
 schemas. An excluded preset without a complete persona would still assemble
 the `mcp-resource-servers` section, so the config is meant for shell-only
