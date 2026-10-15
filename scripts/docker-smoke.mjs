@@ -52,6 +52,15 @@ try {
     'test "$SMOKE_VALUE" = present && git --version && jj --version && mise --version && python --version && uv --version && uvx --version && node --version && npm --version && jq --version && yq --version && gh --version && gh issue comment --help | grep -q -- --attach && docker --version && docker buildx version && docker compose version && for command in cc make pkg-config unzip zip xz file patch ssh rsync ps gh pnpm yarn agent-browser install-browser sudo; do command -v "$command" || exit 1; done && ! command -v pip && ! command -v dockerd && ! command -v containerd',
   ]);
 
+  // The PTC bootstrap has to be in the sandbox the session runs: the provider
+  // resolves it in the execution world, so the image carries the pinned copy and
+  // the bundle patch names it.
+  await run(client, [
+    "/bin/bash",
+    "-lc",
+    "test -s /opt/dsh-yawn/ptc-runtime-node/process.js",
+  ]);
+
   // A repository setup hook may install system packages, so the sandbox user
   // must reach root with sudo and no password. The Kubernetes smoke checks the
   // same rule under its pod security context; this container checks the rule
@@ -60,6 +69,8 @@ try {
   if (sudoUid !== "0") {
     throw new Error(`sudo did not reach root: ${sudoUid}`);
   }
+
+  await assertPtcPipe(client);
 
   // The browser is deliberately not in the image; `install-browser`, which the
   // image does carry, adds it on demand. This runs that command for real and
@@ -479,4 +490,98 @@ async function run(client, argv, cwd = "/workspace") {
   }
   if (!exited) throw new Error("command stream ended without an exit status");
   return stdout;
+}
+
+/**
+ * Drive one PTC run through a real sandbox. The child adopts file descriptor 7
+ * the way `openInheritedControlChannel()` does and echoes what it reads, which
+ * proves the descriptor, the launch marker, and both directions of the channel
+ * together: the bootstrap the image ships (checked above) cannot handshake
+ * without it.
+ */
+async function assertPtcPipe(client) {
+  const program = [
+    'import { Socket } from "node:net";',
+    "const stream = new Socket({",
+    "  fd: 7,",
+    "  readable: true,",
+    "  writable: true,",
+    "  allowHalfOpen: true,",
+    "});",
+    "console.log(`marker:${process.env.DSH_SUBPROCESS_CONTROL}`);",
+    'stream.on("data", (chunk) => stream.write(chunk));',
+    'stream.write("ready\\n");',
+    "",
+  ].join("\n");
+  await client.writeFile({
+    path: "/tmp/ptc-pipe-smoke.mjs",
+    content: new TextEncoder().encode(program),
+    guard: { case: "createIfAbsent", value: true },
+  });
+
+  const toSend = [];
+  let wake;
+  const requests = (async function* () {
+    yield {
+      message: {
+        case: "start",
+        value: {
+          argv: ["node", "/tmp/ptc-pipe-smoke.mjs"],
+          cwd: "/workspace",
+          env: {},
+          stdin: new Uint8Array(),
+        },
+      },
+    };
+    while (true) {
+      if (toSend.length === 0) {
+        await new Promise((resolve) => {
+          wake = resolve;
+        });
+      }
+      yield { message: { case: "control", value: toSend.shift() } };
+    }
+  })();
+  const send = (text) => {
+    toSend.push(new TextEncoder().encode(text));
+    wake?.();
+    wake = undefined;
+  };
+
+  const decoder = new TextDecoder();
+  let stdout = "";
+  let stderr = "";
+  let control = "";
+  let asked = false;
+  for await (const response of client.ptc.run(requests)) {
+    if (response.event.case === "stdout") {
+      stdout += decoder.decode(response.event.value);
+    }
+    if (response.event.case === "stderr") {
+      stderr += decoder.decode(response.event.value);
+    }
+    if (response.event.case === "control") {
+      control += decoder.decode(response.event.value);
+      if (!asked && control.includes("ready\n")) {
+        asked = true;
+        send("ping");
+      }
+      if (control.includes("ping")) {
+        // The echo arrived. Ending the call is the termination the PTC runtime
+        // performs once its program has settled.
+        break;
+      }
+    }
+  }
+  if (!stdout.includes("marker:pipe")) {
+    throw new Error(
+      `the child did not inherit the PTC marker: stdout=${JSON.stringify(stdout)} stderr=${JSON.stringify(stderr)}`,
+    );
+  }
+  if (!control.includes("ping")) {
+    throw new Error(
+      `the PTC channel did not echo: control=${JSON.stringify(control)} stderr=${JSON.stringify(stderr)}`,
+    );
+  }
+  process.stdout.write("ptc pipe: ok\n");
 }

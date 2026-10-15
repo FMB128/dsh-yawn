@@ -50,6 +50,7 @@ changes.
 | ---------------------------------- | ------------------------- | ----------------------------------------- |
 | `read`, `write`, `edit`, `present` | your disk                 | sandbox workspace                         |
 | `bash`                             | your machine              | sandbox                                   |
+| `run_code` (the `ptc` preset)      | your machine              | a Node child in the sandbox               |
 | `glob`, `grep`                     | ripgrep on your machine   | sandbox workspace, ripgrep in the sandbox |
 | Working directory                  | wherever you launched dsh | `/workspace/repository` in the sandbox    |
 | `docker`                           | your Docker daemon        | a rootless daemon in the sandbox pod      |
