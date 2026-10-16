@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   Config,
   DEFAULT_EXCLUDED_PRESETS,
+  McpToolExclusion,
   apply,
   isMcpToolName,
   mcpToolNames,
@@ -15,11 +16,15 @@ const flush = (): Promise<void> =>
 
 interface RestrictCall {
   deny: string[];
-  dispose: ReturnType<typeof vi.fn>;
+  dispose: () => void;
 }
 
 function makeHarness(
-  options: { preset?: string | undefined; deferInject?: boolean } = {},
+  options: {
+    preset?: string | undefined;
+    deferInject?: boolean;
+    presets?: boolean;
+  } = {},
 ) {
   const ctx = new Context();
   const schemaNames = [
@@ -33,26 +38,46 @@ function makeHarness(
     schemas: () =>
       schemaNames.map((name) => ({ name, description: "", parameters: {} })),
     restrict: vi.fn((filter: { deny: string[] }) => {
-      const call: RestrictCall = { deny: [...filter.deny], dispose: vi.fn() };
+      const call: RestrictCall = {
+        deny: [...filter.deny],
+        dispose: vi.fn(() => undefined),
+      };
       restrictions.push(call);
       return call.dispose;
     }),
   };
   const fiberDisposals: ReturnType<typeof vi.fn>[] = [];
   const pendingInjections: Array<() => void> = [];
-  const preset = Object.hasOwn(options, "preset") ? options.preset : "minimal";
+  let preset = Object.hasOwn(options, "preset") ? options.preset : "minimal";
   const agent = {
     id: "session-minimal",
-    session: { id: "session-minimal", header: { agentPreset: preset } },
+    session: {
+      id: "session-minimal",
+      // The creation fact, deliberately kept apart from the live preset the
+      // registry reports: the Web UI picks a preset for a blank session
+      // through agentPresets.select, which never rewrites this header.
+      header: { agentPreset: "standard" },
+    },
     ctx: {
       inject: (_services: string[], callback: (scope: unknown) => void) => {
-        const run = () => callback({ tools });
+        let owned: RestrictCall | undefined;
+        const scopedTools = {
+          ...tools,
+          restrict: (filter: { deny: string[] }): (() => void) => {
+            const disposer = tools.restrict(filter);
+            owned = restrictions[restrictions.length - 1];
+            return disposer;
+          },
+        };
+        const run = () => callback({ tools: scopedTools });
         if (options.deferInject === true) {
           pendingInjections.push(run);
         } else {
           run();
         }
-        const dispose = vi.fn();
+        // Cordis tears the injected fiber's restriction effect down with the
+        // fiber, so the mock dispose lifts this injection's mask.
+        const dispose = vi.fn(() => owned?.dispose());
         fiberDisposals.push(dispose);
         return { dispose };
       },
@@ -61,6 +86,11 @@ function makeHarness(
   const agents = { list: () => [] as Agent[] };
   ctx.provide("agents", agents);
   ctx.provide("tools", tools);
+  if (options.presets !== false) {
+    ctx.provide("agentPresets", {
+      composedPreset: () => preset,
+    });
+  }
   return {
     agent,
     agents,
@@ -69,6 +99,9 @@ function makeHarness(
     pendingInjections,
     restrictions,
     schemaNames,
+    selectPreset: (next: string | undefined) => {
+      preset = next;
+    },
     tools,
   };
 }
@@ -165,7 +198,7 @@ describe("apply", () => {
     expect(harness.restrictions).toHaveLength(0);
   });
 
-  it("does nothing when the session has no agent preset", async () => {
+  it("does nothing when the agent runs no preset", async () => {
     const harness = makeHarness({ preset: undefined });
     apply(harness.ctx, { excludedPresets: ["minimal"] });
     await flush();
@@ -173,6 +206,79 @@ describe("apply", () => {
       source: "startup",
     });
     expect(harness.restrictions).toHaveLength(0);
+  });
+
+  it("follows a preset selected on a blank session", async () => {
+    const harness = makeHarness({ preset: "standard" });
+    harness.agents.list = () => [harness.agent];
+    apply(harness.ctx, { excludedPresets: ["minimal"] });
+    await flush();
+    agentEvents(harness.ctx, harness.agent).emit("agent/created", {
+      source: "startup",
+    });
+    expect(harness.restrictions).toHaveLength(0);
+
+    // The Web UI picks `minimal` for the blank session. The preset registry
+    // rebinds the composition and emits `tools/change`; the session header
+    // keeps naming the preset the session started with.
+    harness.selectPreset("minimal");
+    harness.ctx.emit("tools/change");
+    expect(harness.agent.session.header.agentPreset).toBe("standard");
+    expect(harness.restrictions.map((call) => call.deny)).toEqual([
+      ["mcp__buildkite__list_builds", "read_mcp_resource"],
+    ]);
+  });
+
+  it("lifts the restriction when the live preset changes away", async () => {
+    const harness = makeHarness();
+    harness.agents.list = () => [harness.agent];
+    apply(harness.ctx, { excludedPresets: ["minimal"] });
+    await flush();
+    agentEvents(harness.ctx, harness.agent).emit("agent/created", {
+      source: "startup",
+    });
+    expect(harness.restrictions).toHaveLength(1);
+
+    harness.selectPreset("standard");
+    harness.ctx.emit("tools/change");
+    expect(harness.fiberDisposals[0]).toHaveBeenCalledTimes(1);
+    expect(harness.restrictions[0]?.dispose).toHaveBeenCalledTimes(1);
+    harness.ctx.emit("tools/change");
+    expect(harness.restrictions).toHaveLength(1);
+  });
+
+  it("is inert when no preset registry is mounted", async () => {
+    const harness = makeHarness({ preset: "minimal", presets: false });
+    harness.agents.list = () => [harness.agent];
+    apply(harness.ctx, { excludedPresets: ["minimal"] });
+    await flush();
+    agentEvents(harness.ctx, harness.agent).emit("agent/created", {
+      source: "startup",
+    });
+    harness.ctx.emit("tools/change");
+    expect(harness.restrictions).toHaveLength(0);
+  });
+
+  it("keeps the previous mask when a new restrict fails", async () => {
+    const harness = makeHarness();
+    apply(harness.ctx, { excludedPresets: ["minimal"] });
+    await flush();
+    agentEvents(harness.ctx, harness.agent).emit("agent/created", {
+      source: "startup",
+    });
+    expect(harness.restrictions).toHaveLength(1);
+
+    harness.schemaNames.push("mcp__notion__search");
+    harness.tools.restrict.mockImplementationOnce(() => {
+      throw new Error("unknown global tool");
+    });
+    harness.ctx.emit("tools/change");
+    expect(harness.restrictions).toHaveLength(1);
+    expect(harness.restrictions[0]?.dispose).not.toHaveBeenCalled();
+
+    harness.ctx.emit("tools/change");
+    expect(harness.restrictions).toHaveLength(2);
+    expect(harness.restrictions[0]?.dispose).toHaveBeenCalledTimes(1);
   });
 
   it("is inert for an empty excluded list", async () => {
@@ -213,6 +319,27 @@ describe("apply", () => {
     expect(harness.fiberDisposals[0]).toHaveBeenCalledTimes(1);
 
     harness.ctx.emit("tools/change");
+    expect(harness.restrictions).toHaveLength(1);
+  });
+});
+
+describe("McpToolExclusion.dispose", () => {
+  it("ignores registry changes and syncs after disposal", () => {
+    const harness = makeHarness();
+    harness.agents.list = () => [harness.agent];
+    const exclusion = new McpToolExclusion({
+      excludedPresets: ["minimal"],
+      presetFor: () => "minimal",
+      agents: () => harness.agents.list(),
+      toolNames: () => harness.schemaNames,
+      warn: () => undefined,
+    });
+    exclusion.sync(harness.agent);
+    expect(harness.restrictions).toHaveLength(1);
+
+    exclusion.dispose();
+    exclusion.reconcile();
+    exclusion.sync(harness.agent);
     expect(harness.restrictions).toHaveLength(1);
   });
 });
