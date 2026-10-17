@@ -12,14 +12,14 @@ READMEs are unusually detailed and precise. Read them directly:
 
 ```sh
 cd "$(mktemp -d)"
-npm pack @deepseek-ai/dsh-base@0.2.1-rc.1
+npm pack @deepseek-ai/dsh-base@0.2.1-rc.2
 tar xzf *.tgz
 # package/README.md is the spec. package/lib/*.js is the built source, which is
 # readable and worth grepping when a README leaves a detail open. A bundle also
 # carries package/cordis.patch.yml, the rows it contributes.
 ```
 
-This repository pins `0.2.1-rc.1`. Match it, because the surface moves between
+This repository pins `0.2.1-rc.2`. Match it, because the surface moves between
 releases.
 
 ### The model
