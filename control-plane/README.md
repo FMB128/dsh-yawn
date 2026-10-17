@@ -20,8 +20,9 @@ For dsh plugin internals and implementation notes, see
 
 ## What the package changes
 
-- `read`, `write`, `edit`, `present`, `bash`, `glob`, and `grep` run in the
-  session's sandbox instead of on the control-plane host.
+- `read`, `write`, `edit`, `present`, `bash`, `glob`, `grep`, and
+  `working_directory` run in the session's sandbox instead of on the
+  control-plane host.
 - Sessions can provision sandboxes through Docker, Kubernetes
   agent-sandbox, or a Buildkite pipeline. A **sandbox profile** names one
   backend and its settings; a session picks a profile on its first prompt.

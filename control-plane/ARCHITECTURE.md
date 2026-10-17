@@ -217,8 +217,8 @@ host row loaded, so with the service off the row would render an error rather
 than disappear. The policy line would tell
 the model it may write under the session workspace and name that workspace by
 its host anchor path, which does not exist inside the sandbox; the model only
-ever needs sandbox paths, and it finds its working directory the way any shell
-user does.
+ever needs sandbox paths, and it learns its working directory, in sandbox
+paths, from the working-directory line described below.
 
 The right sidebar's **Files** and **Preview** tabs and the file cards under
 each turn (`workspace-files`, `ui-sidebar-files`, `ui-sidebar-documentpreview`,
@@ -292,9 +292,11 @@ group and hangs up what remains. Like file browsing, the allocation reaches the
 sandbox through the agent that is asking, so the bundle keeps the stock rows
 and adds `sandbox-terminal-controller`, which wraps the live
 `terminalController` service: shell discovery and terminal creation run inside
-`agents.withInitiator(agent, ...)`, and input and resize reset the session's
-idle timer so a sandbox is not hibernated out from under a terminal someone is
-typing in. Terminal output stays out of the agent transcript. The same seam is
+`agents.withInitiator(agent, ...)`, and each input or resize the terminal
+accepts resets the session's idle timer, so a sandbox is not hibernated out
+from under a terminal someone is typing in. Input and resize travel on the
+`attach` stream's uplink, and the wrapper counts the `ack` frame the stock
+controller sends back for each accepted command. Terminal output stays out of the agent transcript. The same seam is
 what dsh's persistent-shell backend (`dsh-terminal-bash`, used by the shipped
 `minimal` preset) waits on: that preset swaps the one-shot `bash` tool for a
 persistent shell that opens its PTY through `ctx.subprocess.spawnTerminal`.
@@ -330,9 +332,12 @@ sandbox has — and its Node executable defaults to the control plane's own
 `process.execPath`, which a sandbox has only by coincidence. The runner image
 ships the compatible bootstrap (see `runner/Dockerfile`; a control-plane test
 keeps its version equal to the dsh pin, because a copy from another release
-fails the handshake at the first frame), and the `ptc-runtime` row names that
-copy as `bootstrapPath` and asks for the bare `node` on the sandbox's own
-`PATH`. The trade is deliberate: the runner image carries one dsh file and
+fails the handshake at the first frame), and the `ptc-runtime` row's `launch`
+names that copy as `bootstrapPath` and asks for the bare `node` on the
+sandbox's own `PATH`. Since dsh 0.2.1 those fields sit under `launch`; the
+provider ignores unknown top-level keys, so a stale row would silently fall
+back to the control-plane paths. The row keeps the default `per-call` mode:
+`persistent-in-memory` needs a second bootstrap the image does not ship. The trade is deliberate: the runner image carries one dsh file and
 follows dsh's release, and in exchange the runtime keeps no version to
 reconcile. The Docker smoke test drives a real run through the channel, because
 only a sandbox proves the descriptor and the marker.
@@ -342,25 +347,32 @@ it launches a desktop application on the host against the session `cwd`.
 That `cwd` is the anchor, and the application probe would run through the
 sandbox subprocess seam and report programs installed in the sandbox.
 
-The bundle also corrects the model-facing system prompt. dsh's stock opener
-names the session working directory in host coordinates — the anchor directory
-above — and adds paragraphs about the host's dsh implementation checkout and
-its Web GUI, none of which holds inside a sandbox. The `sandbox-context` row
-shadows the `cwd` prompt variable with the sandbox workspace, answers the
-artifacts folder beside it and what the session's backend keeps across a sleep
-as two more prompt variables, contributes a short environment section naming
-the sandbox mount, the durable output folder, and the GUI paragraph's
-still-true claim about what "this page" means, and drops the host-only
-checkout and GUI sections from the assembled prompt. The drop matches those
-sections by their text, not by name or position, so it survives dsh refactors
-of its prompt composition. If a dsh update rewords or removes those
-paragraphs, the drop matches nothing, logs a warning once per host process,
-and the sections ship unchanged while the environment section still states the
-facts. Tests run the drop against an assembly built by the pinned
-`@deepseek-ai/dsh-system-prompt` service, and a wording test downloads the
-pinned composer packages (`@deepseek-ai/dsh-app-boot`, `@deepseek-ai/dsh-web-app`)
-and fails CI when either paragraph changes, so a dsh bump cannot silently
-reword them. The markers themselves are pinned to the observed wording.
+Since dsh 0.2.1 one service, `workingDirectory`, owns each session's current
+directory. Tools take their cwd from it, every model request carries it as a
+"Current working directory" line, and the `working_directory` tool changes it.
+It starts from the session `cwd`, which is the anchor, so the model would be
+told a host path that a shell `cd` cannot reach. The bundle keeps the stock
+row and adds `sandbox-working-directory`, which wraps the live service: `get`
+maps the anchor and anything under it onto the sandbox workspace, so the
+prompt line, the tool, the shells, and the Terminal tab all name sandbox paths.
+Its checks read the sandbox filesystem, so they run as the agent they serve.
+The composer's skill list also asks for the directory of an open session,
+from a plain browser request; there the wrapper answers the recorded directory
+without checking it, so viewing a session does not wake its sandbox.
+
+The bundle also corrects the model-facing system prompt. Since dsh 0.2.1 the
+Web bundle's `harness-dev-context` row tells the model the host's dsh
+implementation checkout and the Web GUI URL, with guidance for changing dsh
+itself; none of it holds inside a sandbox, so the bundle disables that row,
+the way dsh's own README suggests. The `sandbox-context` row shadows the `cwd`
+prompt variable with the sandbox workspace, answers the artifacts folder
+beside it and what the session's backend keeps across a sleep as two more
+prompt variables, and contributes a short environment section naming the
+sandbox mount, the durable output folder, and the GUI paragraph's still-true
+claim about what "this page" means. A patch entry for a row id that no longer
+exists is skipped with only a warning, so a test downloads the pinned
+`@deepseek-ai/dsh-web-app` and fails CI if it stops mounting
+`harness-dev-context`.
 
 The bundle also serves skills authored in this package. dsh's stock local
 provider discovers skills from disk, and this package's filesystem seam reads
@@ -434,9 +446,10 @@ userns-remapped Docker does not map the host-side value at all — so the lookup
 belongs in the image and the run command needs no `--group-add`. A pod that sets
 `runAsUser`, as the Helm chart does, skips the drop and never starts as root.
 
-`DSH_YAWN_BIND_ALL=1` applies `bind-all.patch.yml`, which binds the Web UI to
-`0.0.0.0` so a published port reaches it. Kubernetes leaves it unset and keeps
-dsh on pod loopback behind oauth2-proxy.
+`DSH_YAWN_BIND_ALL=1` binds the Web UI to the container's own address
+(`hostname -i`) so a published port reaches it; dsh refuses wildcard addresses
+such as `0.0.0.0`. Kubernetes leaves it unset and keeps dsh on pod loopback
+behind oauth2-proxy.
 
 The default backend uses Docker on the same machine as dsh. The Kubernetes
 backend uses Kubernetes SIG agent-sandbox. The Buildkite backend runs each

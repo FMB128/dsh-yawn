@@ -2,9 +2,9 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type {
-  TerminalAttachmentId,
   TerminalController,
   TerminalCreateRequest,
+  TerminalFrame,
   WebTerminalId,
 } from "@deepseek-ai/dsh-api-terminal-controller";
 import { describe, expect, it } from "vitest";
@@ -14,12 +14,12 @@ import { scopeToSession } from "../../src/terminal/terminal-controller.js";
 const AGENT = { id: "session-one" } as unknown as Agent;
 
 /** Stock method names the wrapper replaces. */
-const WRAPPED = ["shells", "create", "write", "resize"] as const;
+const WRAPPED = ["shells", "create", "attach"] as const;
 
 /**
  * Enough of the stock controller to prove the wrapper's effect: `shells` and
- * `create` read the initiator (as every subprocess call does) and write and
- * resize record the calls and the activity sink.
+ * `create` read the initiator (as every subprocess call does), and `attach`
+ * answers the input it was sent with the frames the stock stream would.
  */
 class FakeTerminalController {
   readonly initiators: Agent[] = [];
@@ -41,25 +41,23 @@ class FakeTerminalController {
     return { id: "terminal-one" };
   }
 
-  write(
+  /** The frames one attachment yields: a screen, output, and three acks. */
+  attach(
     _agent: Agent,
     _id: WebTerminalId,
-    _attachmentId: TerminalAttachmentId,
-    data: string,
-  ): Promise<void> {
-    this.calls.push(`write:${data}`);
-    return Promise.resolve();
-  }
-
-  resize(
-    _agent: Agent,
-    _id: WebTerminalId,
-    _attachmentId: TerminalAttachmentId,
-    cols: number,
-    rows: number,
-  ): Promise<void> {
-    this.calls.push(`resize:${cols}x${rows}`);
-    return Promise.resolve();
+    _signal: AbortSignal,
+  ): AsyncIterable<TerminalFrame> {
+    this.calls.push("attach");
+    const frames = [
+      { type: "snapshot", sequence: 0, screen: "$ ", writable: true },
+      { type: "ack", sequence: 1 },
+      { type: "output", sequence: 1, data: "ls\r\n" },
+      { type: "ack", sequence: 2 },
+      { type: "ack", sequence: 3, refusal: "read-only" },
+    ] as TerminalFrame[];
+    return (async function* () {
+      yield* frames;
+    })();
   }
 
   environment(_agent: Agent, _signal: AbortSignal): unknown {
@@ -73,15 +71,6 @@ class FakeTerminalController {
   retain(
     _sessionId: unknown,
     _id: unknown,
-    _signal: AbortSignal,
-  ): AsyncIterable<unknown> {
-    return (async function* () {})();
-  }
-
-  follow(
-    _agent: Agent,
-    _id: unknown,
-    _attachmentId: unknown,
     _signal: AbortSignal,
   ): AsyncIterable<unknown> {
     return (async function* () {})();
@@ -144,25 +133,28 @@ describe("scopeToSession for the terminal controller", () => {
     );
   });
 
-  it("notes terminal input and resize as session activity", async () => {
+  it("notes accepted terminal input and resize as session activity", async () => {
     const { controller, activity } = makeService();
     const typed = controller as unknown as TerminalController;
 
-    await typed.write(
+    const frames: TerminalFrame[] = [];
+    for await (const frame of typed.attach(
       AGENT,
       "terminal-one" as WebTerminalId,
-      "attachment-one" as TerminalAttachmentId,
-      "ls\n",
-    );
-    await typed.resize(
-      AGENT,
-      "terminal-one" as WebTerminalId,
-      "attachment-one" as TerminalAttachmentId,
-      100,
-      40,
-    );
+      signal(),
+    )) {
+      frames.push(frame);
+    }
 
-    expect(controller.calls).toEqual(["write:ls\n", "resize:100x40"]);
+    // Every frame passes through; only the two accepted acks count.
+    expect(frames.map((frame) => frame.type)).toEqual([
+      "snapshot",
+      "ack",
+      "output",
+      "ack",
+      "ack",
+    ]);
+    expect(controller.calls).toEqual(["attach"]);
     expect(activity).toEqual([AGENT, AGENT]);
   });
 
@@ -175,14 +167,7 @@ describe("scopeToSession for the terminal controller", () => {
     }
     // The browser half disappears if the row is replaced rather than wrapped,
     // so the stock methods must stay exactly where the gateway describes them.
-    for (const method of [
-      "environment",
-      "list",
-      "retain",
-      "follow",
-      "rename",
-      "close",
-    ]) {
+    for (const method of ["environment", "list", "retain", "rename", "close"]) {
       expect(Object.hasOwn(controller, method)).toBe(false);
       expect(Reflect.get(controller, method)).toBe(
         Reflect.get(FakeTerminalController.prototype, method),
@@ -193,8 +178,8 @@ describe("scopeToSession for the terminal controller", () => {
     for (const method of WRAPPED) {
       expect(Object.hasOwn(controller, method)).toBe(false);
     }
-    expect(Reflect.get(typed, "write")).toBe(
-      Reflect.get(FakeTerminalController.prototype, "write"),
+    expect(Reflect.get(typed, "attach")).toBe(
+      Reflect.get(FakeTerminalController.prototype, "attach"),
     );
   });
 });

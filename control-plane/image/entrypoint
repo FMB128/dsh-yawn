@@ -28,15 +28,23 @@ fi
 dsh-yawn-seed
 
 set -- --port "${DSH_YAWN_WEB_PORT:-3000}" --no-open "$@"
+# DSH_YAWN_BIND_ALL=1 lets a published port reach the UI. dsh listens on
+# 127.0.0.1 by default and refuses wildcard addresses such as 0.0.0.0, so the
+# Web UI binds the container's own address instead, which is where Docker
+# forwards a published port. It goes before the container arguments, so a
+# --host there still wins.
+if [ "${DSH_YAWN_BIND_ALL:-0}" = 1 ]; then
+  address=$(hostname -i | awk '{print $1}')
+  if [ -z "$address" ]; then
+    echo "dsh-yawn: DSH_YAWN_BIND_ALL=1, but hostname -i reported no address to bind." >&2
+    exit 1
+  fi
+  set -- --host "$address" "$@"
+fi
 # DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1 mounts GET /launch-token (see
 # launch-token.patch.yml). The overlay is a launcher flag, so it goes before
 # the web app's arguments.
 if [ "${DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE:-0}" = 1 ]; then
   set -- --patch /opt/dsh-yawn/launch-token.patch.yml "$@"
-fi
-# DSH_YAWN_BIND_ALL=1 lets a published port reach the UI; see
-# bind-all.patch.yml.
-if [ "${DSH_YAWN_BIND_ALL:-0}" = 1 ]; then
-  set -- --patch /opt/dsh-yawn/bind-all.patch.yml "$@"
 fi
 exec dsh --profile web "$@"

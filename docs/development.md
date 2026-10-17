@@ -74,7 +74,7 @@ controller lifecycle against it. See
 
 A checkout install uses a dsh you run yourself instead of the released images.
 It needs the pinned `@deepseek-ai/dsh` version from
-`control-plane/package.json` (0.2.0-rc.2) on your PATH. Build first, then
+`control-plane/package.json` (0.2.1-rc.1) on your PATH. Build first, then
 install the control-plane directory:
 
 ```sh

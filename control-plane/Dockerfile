@@ -86,7 +86,7 @@ RUN DSH_HOME=/opt/dsh-yawn/seed dsh plugin --profile web add /opt/dsh-yawn/dsh-y
     && rm -rf /opt/dsh-yawn/seed \
     && cp /opt/dsh-yawn/meta/version /opt/dsh-yawn/version
 
-COPY control-plane/image/settings.patch.yml control-plane/image/launch-token.patch.yml control-plane/image/bind-all.patch.yml control-plane/image/profile-refresh.mjs /opt/dsh-yawn/
+COPY control-plane/image/settings.patch.yml control-plane/image/launch-token.patch.yml control-plane/image/profile-refresh.mjs /opt/dsh-yawn/
 COPY control-plane/image/seed /usr/local/bin/dsh-yawn-seed
 COPY control-plane/image/entrypoint /usr/local/bin/dsh-yawn-entrypoint
 

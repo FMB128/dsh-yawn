@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 
 import type { RunResponse } from "../src/gen/dsh/yawn/v1/ptc_pb.js";
 import { PtcPipe } from "../src/ptc/pipe.js";
@@ -81,5 +84,31 @@ describe("PTC run", () => {
       pipe.start(fakeRunnerClient(run), commandOver(["node"])),
     ).rejects.toThrow("PTC channel closed before the command started");
     expect(run.messages).toEqual([]);
+  });
+});
+
+/**
+ * The bundle patch points the stock PTC provider at the runner image's
+ * bootstrap and the sandbox's `node`. The provider keeps keys its schema does
+ * not read instead of rejecting them, so a field that moves in a dsh release
+ * would silently fall back to control-plane paths no sandbox has. Resolve the
+ * row through the pinned provider's own schema to catch that.
+ */
+describe("the ptc-runtime row", () => {
+  it("resolves to the sandbox bootstrap under the pinned provider", async () => {
+    const { default: NodePtcRuntime } = await import(
+      "@deepseek-ai/dsh-ptc-runtime-node"
+    );
+    type Config = Parameters<typeof NodePtcRuntime.Config>[0];
+    const rows = parse(
+      readFileSync(new URL("../cordis.patch.yml", import.meta.url), "utf8"),
+    ) as Array<{ id?: string; config?: Config }>;
+    const row = rows.find((entry) => entry.id === "ptc-runtime");
+
+    expect(NodePtcRuntime.Config(row?.config).launch).toEqual({
+      kind: "node-script",
+      executable: "node",
+      bootstrapPath: "/opt/dsh-yawn/ptc-runtime-node/process.js",
+    });
   });
 });

@@ -47,6 +47,9 @@ describe("persistent shell in a sandbox session", () => {
       sandboxPolicy: policy,
       terminals: {},
       sessionProjections: {},
+      // In a session this is dsh's working-directory service as
+      // `working-directory.ts` wraps it: the sandbox workspace.
+      workingDirectory: { ensure: () => Promise.resolve(SANDBOX_WORKSPACE) },
       get: (name: string) => (name === "sandbox" ? sandbox : undefined),
     };
     const backend = new BashTerminalBackend(
@@ -93,7 +96,7 @@ describe("persistent shell in a sandbox session", () => {
       "--norc",
       "-i",
     ]);
-    // No caller-supplied cwd: the resolved policy root is the sandbox workspace.
+    // No caller-supplied cwd: the shell starts in the session's directory.
     expect(spawned[0]?.cwd).toBe(SANDBOX_WORKSPACE);
   });
 });

@@ -57,8 +57,18 @@
 - id: ptc-runtime
   name: '@deepseek-ai/dsh-ptc-runtime-node'
   config:
-    nodeExecutable: node
-    bootstrapPath: /opt/dsh-yawn/ptc-runtime-node/process.js
+    launch:
+      kind: node-script
+      executable: node
+      bootstrapPath: /opt/dsh-yawn/ptc-runtime-node/process.js
+
+# dsh tells the model where the host's dsh checkout is and which URL serves
+# the Web GUI, and adds guidance for editing dsh itself. None of it holds
+# inside a sandbox: the checkout is not there and the URL is unreachable. The
+# sandbox-context row inserted below keeps the one still-true sentence, that
+# "this page" means the Web UI. Web-only, like directory-picker.
+- id: harness-dev-context
+  disabled: true
 
 # The Web right sidebar's Files and Preview tabs, and the deliverables cards
 # under each turn, read through `workspace-files`, which serves the browser
@@ -129,10 +139,8 @@
       name: '@zhming0/dsh-yawn/file-reference'
 
     # States the sandbox environment in the model's system prompt: shadows the
-    # cwd prompt variable with the sandbox workspace, contributes a short
-    # environment section, and drops dsh's host-only prompt sections (the
-    # implementation checkout and Web GUI paragraphs), which do not hold
-    # inside a sandbox.
+    # cwd prompt variable with the sandbox workspace and contributes a short
+    # environment section.
     - id: sandbox-context
       name: '@zhming0/dsh-yawn/sandbox-context'
 
@@ -140,6 +148,14 @@
     # workspace as the root and adds no prompt line (see the stock row above).
     - id: sandbox-workspace-policy
       name: '@zhming0/dsh-yawn/sandbox-policy'
+
+    # Keeps dsh's per-session working directory (the stock working-directory
+    # row) in sandbox paths: the model's "Current working directory" line and
+    # the `working_directory` tool name the sandbox workspace, not the host
+    # anchor, and the service reaches the sandbox as the agent it serves.
+    # Same wait-not-inject shape as the rows below.
+    - id: sandbox-working-directory
+      name: '@zhming0/dsh-yawn/working-directory'
 
     # Runs the Web Files and Preview sidebar (the stock workspace-files row
     # above) as the session it serves. Waits for the Web-only services instead

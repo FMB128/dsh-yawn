@@ -3,6 +3,6 @@
   "private": true,
   "description": "The dsh CLI tree the control-plane image runs, locked outside the workspace so the image never resolves it fresh.",
   "dependencies": {
-    "@deepseek-ai/dsh": "0.2.0-rc.2"
+    "@deepseek-ai/dsh": "0.2.1-rc.1"
   }
 }

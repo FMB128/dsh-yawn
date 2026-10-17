@@ -18,23 +18,6 @@ stock=$(docker run --rm --entrypoint sh dsh-yawn-control-plane:dev -c \
 printf '%s\n' "$stock" | grep -q "sandbox-manager"
 echo "sandbox-manager row composes"
 
-# The overlay restates the web bundle's whole webserver row, so it is only
-# correct while it still matches that row. Composing with and without it and
-# diffing the two turns upstream drift -- a field renamed, added, or dropped --
-# into a failure here, in the same change that bumps dsh. The only lines the
-# diff may contain are the two host values and the bundle's "patched by"
-# provenance markers.
-echo "+++ :mag: Checking the overlay changes only the bind host"
-patched=$(docker run --rm --entrypoint sh dsh-yawn-control-plane:dev -c \
-  'dsh-yawn-seed && dsh --profile web --patch /opt/dsh-yawn/bind-all.patch.yml --dump-config')
-changes=$(diff <(printf '%s\n' "$stock") <(printf '%s\n' "$patched") |
-  grep -E '^[<>]' | grep -v '^[<>] # == ' || true)
-printf '%s\n' "$changes"
-test "$(printf '%s\n' "$changes" | grep -c .)" -eq 2
-printf '%s\n' "$changes" | grep -q '^< .*host:.*127\.0\.0\.1'
-printf '%s\n' "$changes" | grep -q '^> .*host:.*0\.0\.0\.0'
-echo "the overlay moves the bind host and nothing else"
-
 # The Web UI's port in /proc/net/tcp is hex: 3000 == 0x0BB8. Waiting for it
 # also proves the entrypoint's privilege drop let the seed and dsh run.
 wait_for_listener() {
@@ -59,11 +42,15 @@ docker exec dsh-yawn-check-loopback grep -q '^Uid:[[:space:]]*1000' /proc/1/stat
 docker exec dsh-yawn-check-loopback grep -q '0100007F:0BB8' /proc/net/tcp
 echo "loopback bind, uid 1000"
 
+# dsh refuses wildcard binds, so the flag binds the container's own address,
+# which /proc/net/tcp lists as little-endian hex.
 echo "+++ :mag: Checking DSH_YAWN_BIND_ALL"
 docker run -d --name dsh-yawn-check-bind -e DSH_YAWN_BIND_ALL=1 dsh-yawn-control-plane:dev
 wait_for_listener dsh-yawn-check-bind
-docker exec dsh-yawn-check-bind grep -q '00000000:0BB8' /proc/net/tcp
-echo "0.0.0.0 bind"
+address=$(docker exec dsh-yawn-check-bind sh -c "hostname -i | awk '{print \$1}'")
+IFS=. read -r a b c d <<<"$address"
+docker exec dsh-yawn-check-bind grep -q "$(printf '%02X%02X%02X%02X:0BB8' "$d" "$c" "$b" "$a")" /proc/net/tcp
+echo "container address bind ($address)"
 
 # The entrypoint's other job is joining the mounted socket's group before it
 # drops root. A socket owned by a known group stands in for the Docker one, and
