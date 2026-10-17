@@ -30,6 +30,9 @@ For dsh plugin internals and implementation notes, see
   notifications, MCP servers, plugins, a Sandbox tab, a right sidebar for
   files and terminal access, repository URL Workspaces, and a Scratch
   Workspace without a repository.
+- The Web UI does not offer DeepSeek account sign-in. Model access uses API
+  keys; the account provider, its `deepseek-account` model route, and the
+  account settings and Remote rows are disabled.
 - Uploaded attachments and `@` file references are copied from or resolved in
   the sandbox workspace.
 - Sessions can install plugins from the Web Plugins page, but those run in the

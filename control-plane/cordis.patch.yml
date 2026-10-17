@@ -36,6 +36,24 @@
 - id: ui-permission
   disabled: true
 
+# DeepSeek account sign-in is not used: model access is API-key based, and a
+# signed-in account would store one shared grant in this control plane's
+# credential store. The provider, its model route, and the Web account UI and
+# Remote controller go together.
+- id: deepseek-account
+  disabled: true
+
+- id: llm-deepseek-account
+  disabled: true
+
+# Web-only rows, like ui-permission. A headless profile skips them with a
+# warning because dsh-web-app never mounts them.
+- id: ui-settings-account
+  disabled: true
+
+- id: account-controller
+  disabled: true
+
 # dsh's sandbox policy describes the host's own file sandbox: a per-session
 # mode switch, a host directory the agent may write under, and a line in every
 # model request ("Current DSH file policy: workspace-write ... may modify files
