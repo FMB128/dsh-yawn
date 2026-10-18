@@ -31,7 +31,9 @@ export async function createRepositoryAnchor(
   stateDir: string,
   input: string,
 ): Promise<RepositoryAnchor> {
-  const repositoryUrl = normalizeWorkspaceRepositoryUrl(input);
+  const repositoryUrl = normalizeWorkspaceRepositoryUrl(
+    httpsRepositoryUrl(input),
+  );
   const title = repositoryTitle(repositoryUrl);
   const root = anchorRoot(stateDir);
   const path = anchorPath(stateDir, repositoryUrl, title);
@@ -145,24 +147,40 @@ export async function workspaceScopes(
   return scopes.filter((scope): scope is WorkspaceScope => scope !== undefined);
 }
 
-/** Normalize and validate a repository URL entered through the Web UI. */
+interface ScpRepositoryUrl {
+  user: string;
+  host: string;
+  path: string;
+}
+
+function parseScpRepositoryUrl(input: string): ScpRepositoryUrl | undefined {
+  const match = /^([^@/:]+)@([^/:]+):(.+)$/.exec(input);
+  return match === null
+    ? undefined
+    : { user: match[1]!, host: match[2]!, path: match[3]! };
+}
+
+/**
+ * Normalize and validate a repository URL. New Workspaces run
+ * httpsRepositoryUrl first, so this also accepts the SSH, HTTP, and git forms
+ * that older anchors stored.
+ */
 export function normalizeWorkspaceRepositoryUrl(input: string): string {
   let repositoryUrl = normalizeRepositoryUrl(input.trim());
   if (repositoryUrl.length === 0 || /\s/.test(repositoryUrl)) {
     throw new Error("Enter a repository URL");
   }
 
-  const scp = /^([^@/:]+)@([^/:]+):(.+)$/.exec(repositoryUrl);
-  if (scp !== null) {
-    const [, user, host, rawPath] = scp;
-    if (rawPath!.includes("?") || rawPath!.includes("#")) {
+  const scp = parseScpRepositoryUrl(repositoryUrl);
+  if (scp !== undefined) {
+    if (scp.path.includes("?") || scp.path.includes("#")) {
       throw new Error("Repository URL must not contain a query or fragment");
     }
-    const path = normalizeRepositoryPath(rawPath!);
+    const path = normalizeRepositoryPath(scp.path);
     if (path.length === 0) {
       throw new Error("Repository URL has no path");
     }
-    return `${user!}@${host!.toLowerCase()}:${path}`;
+    return `${scp.user}@${scp.host.toLowerCase()}:${path}`;
   }
 
   let parsed: URL;
@@ -172,7 +190,9 @@ export function normalizeWorkspaceRepositoryUrl(input: string): string {
     throw new Error("Enter a valid repository URL");
   }
   if (!["http:", "https:", "ssh:", "git:"].includes(parsed.protocol)) {
-    throw new Error("Repository URL must use HTTP, HTTPS, SSH, or Git");
+    throw new Error(
+      "Use an HTTPS repository URL (an SSH URL without a port is converted)",
+    );
   }
   if (parsed.password.length > 0) {
     throw new Error("Repository URL must not contain a password");
@@ -195,6 +215,44 @@ export function normalizeWorkspaceRepositoryUrl(input: string): string {
   return repositoryUrl.endsWith("/")
     ? repositoryUrl.slice(0, -1)
     : repositoryUrl;
+}
+
+/**
+ * New Workspaces clone over HTTPS. Convert an SSH clone URL to its HTTPS
+ * form; an explicit SSH port is ambiguous because it is the SSH port, a URL
+ * with a password is rejected, and `git://`/HTTP are not HTTPS. Other URLs
+ * pass through for normalizeWorkspaceRepositoryUrl to validate.
+ */
+export function httpsRepositoryUrl(input: string): string {
+  const trimmed = input.trim();
+  const scp = parseScpRepositoryUrl(trimmed);
+  if (scp !== undefined) {
+    return `https://${scp.host.toLowerCase()}/${scp.path.replace(/^\/+/, "")}`;
+  }
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return input;
+  }
+  if (url.protocol === "ssh:") {
+    if (url.password !== "") {
+      throw new Error("Repository URL must not contain a password");
+    }
+    if (url.port !== "") {
+      throw new Error(
+        "Use the HTTPS repository URL; an SSH URL with a port is ambiguous",
+      );
+    }
+    return `https://${url.host}${url.pathname}${url.search}${url.hash}`;
+  }
+  if (url.protocol === "git:") {
+    throw new Error("Use the HTTPS repository URL; git:// is not supported");
+  }
+  if (url.protocol === "http:") {
+    throw new Error("Use the HTTPS repository URL; HTTP is not supported");
+  }
+  return input;
 }
 
 export function repositoryTitle(repositoryUrl: string): string {

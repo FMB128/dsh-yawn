@@ -178,8 +178,12 @@ likely to mislead you.
   secret of the same name. Scoping limits delivery, not access: one control
   plane is still one trust domain.
   `GITHUB_TOKEN` also supplies Git credentials for github.com; a
-  workspace-scoped one serves that workspace's clones. There is no GitHub
-  device flow.
+  workspace-scoped one serves that workspace's clones. Other hosts come from
+  the explicit Git credential table (Settings → Git credentials), which names
+  each host's secret and username; a workspace-scoped secret overrides the
+  global value there. New Workspaces clone over HTTPS; an SSH URL is converted
+  at creation, and an SSH URL with a port, HTTP, or `git://` is rejected. SSH
+  keys are not managed yet. There is no GitHub device flow.
 - Sandbox code can read injected secrets by design. Keep credentials in the
   control-plane store, never in pod configuration or workspace files. Two are
   deliberate exceptions, because a sandbox must never receive them: the runner

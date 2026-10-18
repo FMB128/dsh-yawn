@@ -92,10 +92,13 @@ reads it, and the file is removed with the session record. If no index exists
 for a session that has a sandbox (the host restarted while the sandbox was
 running, or the walk failed), `@` falls back to waking the sandbox.
 
-The Web profile also gains a **Settings → Secrets** page. It edits the
-control plane's broker store: the browser sends names and values in and receives
-only names back, never a value. **Settings → Sandboxes** edits the live slice
-of the sandbox-manager settings described under
+The Web profile also gains a **Settings → Secrets** page and a
+**Settings → Git credentials** page. Secrets edits the control plane's broker
+store: the browser sends names and values in and receives only names back,
+never a value. Git credentials edits the explicit host table (host, username,
+and secret name) that the control plane resolves into Git credentials.
+**Settings → Sandboxes** edits the live slice of the sandbox-manager settings
+described under
 [Settings](README.md#settings): sandbox profiles, the default profile, and the idle
 and expiry timers, applied on the host without a restart.
 

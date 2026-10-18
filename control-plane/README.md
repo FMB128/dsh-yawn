@@ -482,6 +482,23 @@ name is the simplest way to reach private repositories — no OAuth app
 required. A workspace-scoped `GITHUB_TOKEN` serves that workspace's clones in
 place of the global one.
 
+Other hosts are configured explicitly on **Settings → Git credentials**: each
+row names a host, the username Git sends, and the secret that holds the token.
+The host is matched as Git sends it, including a non-default port, so a
+hyphenated hostname or `git.example.com:8443` needs no special spelling. The
+username is configurable because forges disagree: github.com's built-in row
+uses `x-access-token`, GitLab and many others use `oauth2`, and Bitbucket Cloud
+uses `x-token-auth`. A row is global, but the secret it names keeps its scope,
+so a workspace-scoped token overrides the global one there. A row whose secret
+is not set is skipped. A row for github.com replaces the built-in `GITHUB_TOKEN`
+entry even before its secret is set; remove the row to fall back.
+
+New Workspaces clone over HTTPS. An SSH clone URL is converted at creation; an
+explicit SSH port, HTTP, and `git://` are rejected because the right HTTPS port
+is ambiguous or the transport is unauthenticated. SSH keys are not managed yet.
+An existing SSH Workspace keeps its URL and its workspace-scoped secrets;
+recreate it from the HTTPS URL and add those secrets again to use the table.
+
 Sandbox code can read injected secrets, which is their purpose. The store
 improves storage and cleanup, not confidentiality from the repository being run.
 Skip `GITHUB_TOKEN` entirely if you only work on public repositories.

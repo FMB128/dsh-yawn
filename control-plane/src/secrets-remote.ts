@@ -4,22 +4,25 @@ import type {
   TypertSchema,
 } from "@deepseek-ai/dsh-typert-protocol";
 
+import { isGitHostCredential, type GitHostCredential } from "./git-hosts.js";
+
 export interface SecretWorkspaceView {
   repositoryUrl: string;
   title: string;
   names: string[];
 }
 
-/** One name list per scope; values never appear in any view. */
+/** One name list per scope plus the explicit Git host table; no values. */
 export interface SecretSettingsView {
   global: string[];
   workspaces: SecretWorkspaceView[];
+  gitHosts: GitHostCredential[];
 }
 
 /**
- * Browser CRUD surface for broker secrets. Values flow browser→host only;
- * every method answers with the updated name lists, never a value.
- * The namespace map declaration lives in remote-contributions.ts.
+ * Browser CRUD surface for the broker's secrets and Git host table. Values
+ * flow browser→host only; every method answers with names and host rows, never
+ * a value. The namespace map declaration lives in remote-contributions.ts.
  */
 export interface SandboxSecretsRemote {
   getSecrets(): Promise<RemoteResult<SecretSettingsView>>;
@@ -37,6 +40,12 @@ export interface SandboxSecretsRemote {
     repositoryUrl: string,
     name: string,
   ): Promise<RemoteResult<SecretSettingsView>>;
+  setGitHost(
+    host: string,
+    username: string,
+    secret: string,
+  ): Promise<RemoteResult<SecretSettingsView>>;
+  deleteGitHost(host: string): Promise<RemoteResult<SecretSettingsView>>;
 }
 
 const stringSchema: TypertSchema<string> = {
@@ -69,7 +78,10 @@ const settingsSchema: TypertSchema<SecretSettingsView> = {
           !("names" in entry) ||
           !Array.isArray(entry.names) ||
           entry.names.some((name) => typeof name !== "string"),
-      )
+      ) ||
+      !("gitHosts" in value) ||
+      !Array.isArray(value.gitHosts) ||
+      (value.gitHosts as unknown[]).some((entry) => !isGitHostCredential(entry))
     ) {
       throw new TypeError("expected a secret settings view");
     }
@@ -124,4 +136,10 @@ export const sandboxSecretsDescriptors: InvocationDescriptor[] = [
     { name: "repositoryUrl", schema: stringSchema },
     { name: "name", schema: stringSchema },
   ]),
+  describe("setGitHost", [
+    { name: "host", schema: stringSchema },
+    { name: "username", schema: stringSchema },
+    { name: "secret", schema: stringSchema },
+  ]),
+  describe("deleteGitHost", [{ name: "host", schema: stringSchema }]),
 ];

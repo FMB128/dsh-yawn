@@ -103,7 +103,8 @@ export function RepositoryDirectoryFlow({
             id="dsh-yawn-repository-hint"
             style={{ margin: "8px 0 0", opacity: 0.7, fontSize: 13 }}
           >
-            HTTPS and SSH repository URLs are supported.
+            Workspaces clone over HTTPS. An SSH URL is converted; private
+            repositories need a token for the host.
           </p>
         ) : (
           <p

@@ -758,6 +758,23 @@ export class SandboxManager extends TypertRemoteService {
     return this.secretSettings();
   }
 
+  /** Add or replace one Git host's credential mapping. */
+  async setGitHost(
+    host: string,
+    username: string,
+    secret: string,
+  ): Promise<SecretSettingsView> {
+    await this.ready;
+    await this.broker.setGitHost(host, username, secret);
+    return this.secretSettings();
+  }
+
+  async deleteGitHost(host: string): Promise<SecretSettingsView> {
+    await this.ready;
+    await this.broker.deleteGitHost(host);
+    return this.secretSettings();
+  }
+
   /** Configured MCP servers with their live connection status. */
   async listMcpServers(): Promise<McpServerView[]> {
     await this.ready;
@@ -1054,7 +1071,7 @@ export class SandboxManager extends TypertRemoteService {
       : workspaceScopes(this.config.stateDir, registry.list());
   }
 
-  /** The Secrets page's read model over the broker's per-scope name lists. */
+  /** The Secrets page's read model over the broker's name lists and Git table. */
   private async secretSettings(): Promise<SecretSettingsView> {
     return {
       global: this.broker.secretNames(GLOBAL_SECRET_SCOPE),
@@ -1065,6 +1082,7 @@ export class SandboxManager extends TypertRemoteService {
           repositoryUrl: scope.repositoryUrl,
         }),
       })),
+      gitHosts: this.broker.gitHosts(),
     };
   }
 

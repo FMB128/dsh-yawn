@@ -1199,6 +1199,7 @@ describe("repository workspaces and instructions", () => {
           names: ["API_KEY", "GITHUB_TOKEN"],
         },
       ],
+      gitHosts: [],
     });
     await expect(
       manager.setWorkspaceSecret(
@@ -1233,6 +1234,121 @@ describe("repository workspaces and instructions", () => {
         password: "workspace-pat",
       },
     ]);
+  });
+
+  it("stores a new SSH workspace as HTTPS and serves its host", async () => {
+    const backend = new FakeBackend();
+    const workspaceRegistry = new FakeWorkspaceRegistry();
+    const manager = new SandboxManager(
+      new Context(),
+      {
+        profiles: { standard: { backend: "docker" } },
+        stateDir: directory,
+        repository: "https://github.com/example/fallback.git",
+      },
+      {
+        backends: { standard: backend },
+        gateway: gatewayFor(backend),
+        workspaceRegistry,
+      },
+    );
+
+    const anchor = await manager.createRepositoryWorkspace(
+      "git@git.fml128.ch:FML128/repo.git",
+    );
+    await manager.setGlobalSecret("FORGE_TOKEN", "forge-pat");
+    await manager.setGitHost("git.fml128.ch", "oauth2", "FORGE_TOKEN");
+
+    expect((await manager.getSecrets()).gitHosts).toEqual([
+      { host: "git.fml128.ch", username: "oauth2", secret: "FORGE_TOKEN" },
+    ]);
+
+    await manager.ensureRunning({
+      id: "session-one",
+      session: { header: { cwd: anchor } },
+    } as unknown as Agent);
+
+    expect(backend.repositoryUrls).toEqual([
+      "https://git.fml128.ch/FML128/repo",
+    ]);
+    expect(backend.client.setupRepositoryUrls).toEqual([
+      "https://git.fml128.ch/FML128/repo",
+    ]);
+    expect(backend.client.gitCredentials).toEqual([
+      { host: "git.fml128.ch", username: "oauth2", password: "forge-pat" },
+    ]);
+
+    await manager.deleteGitHost("git.fml128.ch");
+    expect((await manager.getSecrets()).gitHosts).toEqual([]);
+  });
+
+  it("uses a workspace-scoped secret for a converted workspace", async () => {
+    const backend = new FakeBackend();
+    const workspaceRegistry = new FakeWorkspaceRegistry();
+    const manager = new SandboxManager(
+      new Context(),
+      {
+        profiles: { standard: { backend: "docker" } },
+        stateDir: directory,
+        repository: "https://github.com/example/fallback.git",
+      },
+      {
+        backends: { standard: backend },
+        gateway: gatewayFor(backend),
+        workspaceRegistry,
+      },
+    );
+
+    const anchor = await manager.createRepositoryWorkspace(
+      "git@git.fml128.ch:FML128/repo.git",
+    );
+    await manager.setWorkspaceSecret(
+      "https://git.fml128.ch/FML128/repo",
+      "FORGE_TOKEN",
+      "workspace-pat",
+    );
+    await manager.setGitHost("git.fml128.ch", "oauth2", "FORGE_TOKEN");
+
+    await manager.ensureRunning({
+      id: "session-one",
+      session: { header: { cwd: anchor } },
+    } as unknown as Agent);
+
+    expect(backend.client.setupRepositoryUrls).toEqual([
+      "https://git.fml128.ch/FML128/repo",
+    ]);
+    expect(backend.client.gitCredentials).toEqual([
+      { host: "git.fml128.ch", username: "oauth2", password: "workspace-pat" },
+    ]);
+  });
+
+  it("rejects SSH URLs with a port, HTTP, and git:// workspaces", async () => {
+    const backend = new FakeBackend();
+    const manager = new SandboxManager(
+      new Context(),
+      {
+        profiles: { standard: { backend: "docker" } },
+        stateDir: directory,
+        repository: "https://github.com/example/fallback.git",
+      },
+      {
+        backends: { standard: backend },
+        gateway: gatewayFor(backend),
+        workspaceRegistry: new FakeWorkspaceRegistry(),
+      },
+    );
+
+    await expect(
+      manager.createRepositoryWorkspace(
+        "ssh://git@git.fml128.ch:8443/FML128/repo.git",
+      ),
+    ).rejects.toThrow("HTTPS");
+    await expect(
+      manager.createRepositoryWorkspace("http://git.fml128.ch/FML128/repo"),
+    ).rejects.toThrow("HTTPS");
+    await expect(
+      manager.createRepositoryWorkspace("git://git.fml128.ch/FML128/repo"),
+    ).rejects.toThrow("HTTPS");
   });
 
   it("does not create repository anchors without the Web workspace service", async () => {
@@ -1355,7 +1471,11 @@ describe("Scratch workspace", () => {
     );
     // Registered like any Workspace, but without a repository anchor.
     await workspaceRegistry.create(manager.scratchWorkspace, "Scratch");
-    expect(await manager.getSecrets()).toEqual({ global: [], workspaces: [] });
+    expect(await manager.getSecrets()).toEqual({
+      global: [],
+      workspaces: [],
+      gitHosts: [],
+    });
     expect(await manager.getInstructions()).toEqual({
       global: "",
       workspaces: [],
