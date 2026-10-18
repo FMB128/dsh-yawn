@@ -44,8 +44,8 @@ in a sandbox of its own. Hence the name: you can lay back and yawn :)
 - Sandbox backends: Docker, Kubernetes
   [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) with warm
   pools, and Buildkite.
-- Sign-in through oauth2-proxy and your OIDC identity provider, in the Helm
-  chart.
+- Built-in OIDC sign-in with your identity provider, so the Helm chart needs no
+  auth proxy.
 - Web UI pages for sandbox profiles and idle timers, secrets, AGENTS.md
   instructions, notifications, MCP servers, and plugins, applied without a
   restart.
@@ -60,8 +60,8 @@ in a sandbox of its own. Hence the name: you can lay back and yawn :)
 - Somewhere to run sandboxes: Docker on the same VM, a Kubernetes cluster with
   [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox), or a
   Buildkite organization.
-- Sign-in in front of the Web UI. The Helm chart runs oauth2-proxy against your
-  OIDC provider; on a VM, bring your own.
+- Sign-in for the Web UI. The Helm chart runs built-in OIDC sign-in against your
+  provider; on a VM, set the same `DSH_YAWN_OIDC_*` names.
 - A model API key, added in the Web UI.
 - Optional: a `GITHUB_TOKEN` for private repositories and pushes.
 

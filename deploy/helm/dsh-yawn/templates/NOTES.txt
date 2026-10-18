@@ -33,32 +33,38 @@ runner setup pages below show the profile to add.
 
 {{- if .Values.oidc.enabled }}
 
-The oauth2-proxy reads its configuration from the Secret
+The control plane reads its OIDC registration from the Secret
 "{{ .Values.oidc.existingSecret }}" in {{ .Release.Namespace }}. If it does not
-exist yet, create it — until then the pod runs but never becomes Ready:
+exist yet, create it — until then the pod cannot start:
 
   kubectl -n {{ .Release.Namespace }} create secret generic {{ .Values.oidc.existingSecret }} \
-    --from-literal=OAUTH2_PROXY_OIDC_ISSUER_URL=https://your-idp/realm \
-    --from-literal=OAUTH2_PROXY_CLIENT_ID=dsh-yawn-control-plane \
-    --from-literal=OAUTH2_PROXY_CLIENT_SECRET=… \
-    --from-literal=OAUTH2_PROXY_COOKIE_SECRET="$(openssl rand -base64 32 | tr -- '+/' '-_')"
+    --from-literal=OIDC_ISSUER=https://your-idp/realm \
+    --from-literal=OIDC_CLIENT_ID=dsh-yawn-control-plane \
+    --from-literal=OIDC_CLIENT_SECRET=…
+
+Register this redirect URI with the identity provider:
+
+  https://{{ .Values.oidc.hostname }}/dsh-yawn/auth/callback
+
+The control plane signs users in itself; there is no auth proxy and no
+/launch-token step. Its browser-session signing secret is created on the data
+volume, so a pod restart does not sign everyone out.
 
 {{- if eq .Values.service.type "LoadBalancer" }}
 Once the Secret exists and the load balancer's address resolves for
 {{ .Values.oidc.hostname }}, open
 
-  https://{{ .Values.oidc.hostname }}/launch-token
+  https://{{ .Values.oidc.hostname }}/
 
-and you land signed in.
+and sign in through the identity provider.
 {{- else }}
-The proxy is running at Service/{{ include "dsh-yawn.fullname" . }}
-(port {{ .Values.service.port }}) but not exposed. Point an Ingress, a Gateway
-API route, or a LoadBalancer Service of your own at it — the pod labels
-(app.kubernetes.io/name, app.kubernetes.io/instance) are a stable target —
-then open https://{{ .Values.oidc.hostname }}/launch-token. Whatever fronts
-dsh must serve https (the proxy's cookie is secure) and pass WebSockets and
-large RPC bodies; docs/control-plane.md has an nginx-ingress
-example.
+The control plane is exposed at Service/{{ include "dsh-yawn.fullname" . }}
+(port {{ .Values.service.port }}) but not outside the cluster. Point an Ingress,
+a Gateway API route, or a LoadBalancer Service of your own at it — the pod
+labels (app.kubernetes.io/name, app.kubernetes.io/instance) are a stable target —
+then open https://{{ .Values.oidc.hostname }}/. Whatever fronts it must serve
+https and pass WebSockets and large RPC bodies; docs/control-plane.md has an
+nginx-ingress example.
 {{- end }}
 
 {{- else }}

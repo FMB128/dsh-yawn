@@ -411,22 +411,37 @@ models' training data, so without the skill a session commits screenshots to a
 side branch and links them. It needs gh 2.99.0 or later, which the runner image
 provides.
 
-One module is not part of the bundle patch:
-`@zhming0/dsh-yawn/launch-token`. Mounted as a row, it serves
-`GET /launch-token`, which redirects the browser to dsh's tokenized login URL so
-users behind an authenticating proxy never read the token from the host log. It
-is not a sign-in: anyone who reaches dsh's port can use it, so the row is off by
-default. The control-plane image mounts it only when `DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1`,
-which the Kubernetes oauth2-proxy manifest sets. To mount it yourself, insert
-the row in a patch layer:
+Two modules are not part of the bundle patch. `@zhming0/dsh-yawn/auth` is the
+built-in sign-in used by the Helm chart. When the `DSH_YAWN_OIDC_*` names
+configure a provider, it runs the OIDC authorization-code flow with PKCE, keeps
+a signed authority-bound session cookie, and wraps the live connection:
+`authorizeIndex` serves the document only to a valid session, and `admit`
+returns the browser Peer for that session while refusing dsh's launch-token
+cookie and `/connect` token. It preserves dsh's Host/Origin fence by calling the
+stock admission first, then refuses every credential that is not this session.
+It also makes `authenticatedUrl` return the clean URL, so the control plane does
+not print a token. The browser-session signing secret is a `sandbox-auth` record
+in the credential store, and the row is mounted only when the image entrypoint
+sees `DSH_YAWN_OIDC_ISSUER`.
+
+`@zhming0/dsh-yawn/launch-token` remains the no-provider shortcut. Mounted as a
+row, it serves `GET /launch-token`, which redirects the browser to dsh's
+tokenized login URL so a port-forward user never reads the token from the host
+log. It is not a sign-in: anyone who reaches dsh's port can use it, so the row
+is off by default and the image mounts it only when
+`DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1` is set without an OIDC provider.
+To mount either row yourself, insert it in a patch layer:
 
 ```yaml
 - insert:
+    - id: sandbox-auth
+      name: "@zhming0/dsh-yawn/auth"
+
     - id: sandbox-launch-token
       name: "@zhming0/dsh-yawn/launch-token"
 ```
 
-A second module rides in the bundle patch itself: `@zhming0/dsh-yawn/owns-host`.
+One module rides in the bundle patch itself: `@zhming0/dsh-yawn/owns-host`.
 It injects `__DSH_TRANSPORT__ = { ownsHost: true }` into the served index, which
 tells the web client the page is served by the dsh host — always true for this
 distribution — so client settings persist to the host on any address. Without
@@ -448,8 +463,9 @@ belongs in the image and the run command needs no `--group-add`. A pod that sets
 
 `DSH_YAWN_BIND_ALL=1` binds the Web UI to the container's own address
 (`hostname -i`) so a published port reaches it; dsh refuses wildcard addresses
-such as `0.0.0.0`. Kubernetes leaves it unset and keeps dsh on pod loopback
-behind oauth2-proxy.
+such as `0.0.0.0`. The chart sets it when built-in sign-in is enabled so the
+Service can reach the pod; without a provider it stays unset and dsh remains on
+pod loopback for `kubectl port-forward`.
 
 The default backend uses Docker on the same machine as dsh. The Kubernetes
 backend uses Kubernetes SIG agent-sandbox. The Buildkite backend runs each

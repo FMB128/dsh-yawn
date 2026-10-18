@@ -11,22 +11,27 @@ Docker daemon.
   before dsh starts, so the command needs no `--group-add` and no host-side
   group lookup.
 - `DSH_YAWN_BIND_ALL=1` lets the published port reach the Web UI. Kubernetes
-  leaves it unset and keeps dsh on pod loopback behind oauth2-proxy.
+  sets it only with built-in OIDC sign-in, where the Service reaches the pod;
+  otherwise dsh stays on pod loopback for `kubectl port-forward`.
 - The sandbox profile needs only `backend: docker`: the runner image defaults
   to the tag matching the control plane, and runners dial back through
   `host.docker.internal` on the published tunnel port 8081.
 - The Web UI's edits persist into `/data/.dsh/profiles/web/cordis.patch.yml`
   inside the container if you would rather edit them directly.
 
-### What is `/launch-token`?
+### What is `/launch-token`, and do I need it?
 
-DeepSeek Harness signs each browser in with a per-process token and exchanges it for a
-cookie that lasts 30 days. `/launch-token` redirects you to the tokenized URL,
-so you never copy a token out of the logs. Open it through the address you use
-to reach the control plane, such as
-`http://localhost:3000/launch-token` or `https://dsh.example.com/launch-token`.
-The route hands the token to anyone who can reach dsh's port; behind the
-distribution's oauth2-proxy, that means authenticated users only.
+DeepSeek Harness signs each browser in with a per-process token and exchanges it
+for a cookie that lasts 30 days. `/launch-token` redirects you to the tokenized
+URL, so you never copy a token out of the logs. Open it through the address you
+use to reach the control plane, such as
+`http://localhost:3000/launch-token`.
+
+You do not need it when the control plane has built-in OIDC sign-in configured:
+open `https://dsh.example.com/`, sign in through the identity provider, and the
+control plane mints its own browser session. `/launch-token` remains for the
+no-OIDC case, a port-forward or an authenticating proxy, where it hands the
+token to anyone who can reach dsh's port.
 Details: [`control-plane.md`](control-plane.md#expose-the-web-ui).
 
 ### What is a sandbox's lifecycle like?

@@ -73,7 +73,7 @@ spec:
           {{- if or .Values.oidc.enabled .Values.controlPlane.extraArgs }}
           args:
             {{- if .Values.oidc.enabled }}
-            # The proxy passes the browser's Host header through, and dsh's
+            # Built-in sign-in serves the browser-facing hostname, and dsh's
             # request fence rejects any /api request whose Host is neither
             # loopback nor an explicitly trusted authority (its defense
             # against DNS rebinding). A bare host, no scheme.
@@ -92,21 +92,70 @@ spec:
             # keeps dual-stack failover while tolerating slow addresses.
             - name: NODE_OPTIONS
               value: --network-family-autoselection-attempt-timeout=3000
-            # Mounts GET /launch-token unconditionally. The route hands dsh's
-            # login token to anyone who can reach port 3000, and dsh binds pod
-            # loopback, so that is only this pod's own containers and your
-            # port-forward — no Service can reach it, and the oauth2-proxy,
-            # when enabled, authenticates before ever connecting. Never point
-            # a Service at port 3000.
+            {{- if .Values.oidc.enabled }}
+            # Built-in OIDC sign-in. The Secret carries the provider
+            # registration; its redirect URI must be
+            # https://<hostname>/dsh-yawn/auth/callback.
+            - name: DSH_YAWN_OIDC_ISSUER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.existingSecret | quote }}
+                  key: OIDC_ISSUER
+            - name: DSH_YAWN_OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.existingSecret | quote }}
+                  key: OIDC_CLIENT_ID
+            - name: DSH_YAWN_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.existingSecret | quote }}
+                  key: OIDC_CLIENT_SECRET
+            - name: DSH_YAWN_OIDC_REDIRECT_URL
+              value: "https://{{ .Values.oidc.hostname }}/dsh-yawn/auth/callback"
+            - name: DSH_YAWN_OIDC_EMAIL_DOMAINS
+              value: {{ .Values.oidc.emailDomains | quote }}
+            - name: DSH_YAWN_OIDC_SCOPES
+              value: {{ .Values.oidc.scopes | quote }}
+            - name: DSH_YAWN_OIDC_CLIENT_AUTH_METHOD
+              value: {{ .Values.oidc.clientAuthMethod | quote }}
+            - name: DSH_YAWN_OIDC_COOKIE_MAX_AGE_DAYS
+              value: {{ .Values.oidc.cookieMaxAgeDays | quote }}
+            - name: DSH_YAWN_OIDC_COOKIE_SECURE
+              value: "true"
+            # The Service reaches the pod address; without a provider dsh
+            # stays on loopback for port-forward access.
+            - name: DSH_YAWN_BIND_ALL
+              value: "1"
+            {{- else }}
+            # Mounts GET /launch-token so a port-forward user never copies the
+            # startup token out of the log. No Service can reach port 3000.
             - name: DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE
               value: "1"
+            {{- end }}
             {{- with .Values.controlPlane.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
             - name: tunnel
               containerPort: 8081
               protocol: TCP
+          {{- if .Values.oidc.enabled }}
+          # DSH_YAWN_BIND_ALL binds dsh to the pod address, so probe that
+          # address. The auth row answers this route once dsh is serving; root
+          # redirects to the provider and cannot be probed.
+          readinessProbe:
+            exec:
+              command:
+                - node
+                - -e
+                - "const os=require('node:os');const ip=Object.values(os.networkInterfaces()).flat().find((a)=>a&&a.family==='IPv4'&&!a.internal).address;fetch('http://'+ip+':3000/dsh-yawn/auth/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          {{- else }}
           # The server binds 127.0.0.1:3000, so a TCP probe against the pod IP
           # cannot reach it; probe over loopback from inside the container.
           # An unauthenticated GET / answers 401 once dsh is serving, so that
@@ -119,6 +168,7 @@ spec:
                 - "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok || r.status === 401 ? 0 : 1), () => process.exit(1))"
             initialDelaySeconds: 3
             periodSeconds: 10
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -136,49 +186,6 @@ spec:
               mountPath: /etc/dsh-yawn/sandbox-settings.yaml
               subPath: sandbox-settings.yaml
               readOnly: true
-        {{- if .Values.oidc.enabled }}
-        - name: oauth2-proxy
-          image: {{ .Values.oidc.image | quote }}
-          env:
-            - name: OAUTH2_PROXY_HTTP_ADDRESS
-              value: 0.0.0.0:4180
-            - name: OAUTH2_PROXY_UPSTREAMS
-              value: http://127.0.0.1:3000
-            - name: OAUTH2_PROXY_PROVIDER
-              value: oidc
-            - name: OAUTH2_PROXY_REDIRECT_URL
-              value: https://{{ .Values.oidc.hostname }}/oauth2/callback
-            - name: OAUTH2_PROXY_EMAIL_DOMAINS
-              value: {{ .Values.oidc.emailDomains | quote }}
-            - name: OAUTH2_PROXY_COOKIE_SECURE
-              value: "true"
-            {{- with .Values.oidc.extraEnv }}
-            {{- toYaml . | nindent 12 }}
-            {{- end }}
-          envFrom:
-            - secretRef:
-                name: {{ .Values.oidc.existingSecret }}
-          ports:
-            - name: http
-              containerPort: 4180
-              protocol: TCP
-          readinessProbe:
-            httpGet:
-              path: /ping
-              port: http
-            initialDelaySeconds: 2
-            periodSeconds: 10
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: [ALL]
-          resources:
-            requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
-              memory: 256Mi
-        {{- end }}
       volumes:
         - name: data
           {{- if .Values.controlPlane.persistence.enabled }}

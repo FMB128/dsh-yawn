@@ -40,34 +40,39 @@ per control plane. Kubernetes runner manifests read the fixed names
 `dsh-yawn-registration-token`. This release owns the first two; the control
 plane creates and owns the Secret.
 
-Create the proxy's OIDC Secret first — the release notes print the command.
-Until it exists the pod runs but never becomes Ready. Without `oidc.enabled`,
-reach the control plane over `kubectl port-forward` and open `/launch-token`.
+Create the OIDC Secret first — the release notes print the command. It holds
+`OIDC_ISSUER`, `OIDC_CLIENT_ID`, and `OIDC_CLIENT_SECRET`; register
+`https://<oidc.hostname>/dsh-yawn/auth/callback` as the provider's redirect URI.
+Until the Secret exists the pod cannot start. The control plane
+signs users in itself, so there is no oauth2-proxy sidecar and no
+`/launch-token` step. Without `oidc.enabled`, reach the control plane over
+`kubectl port-forward` and open `/launch-token`.
 
 ## Values
 
-| Key                                                      | Default                                     | Description                                                                                                                                    |
-| -------------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `controlPlane.image.repository`                          | `ghcr.io/zhming0/dsh-yawn-control-plane`    | Control-plane image                                                                                                                            |
-| `controlPlane.image.tag`                                 | `.Chart.appVersion`                         | Released tag                                                                                                                                   |
-| `controlPlane.resources`                                 | `250m/512Mi → 2Gi`                          | Container resource requests and limits                                                                                                         |
-| `controlPlane.extraArgs`                                 | `[]`                                        | Extra `dsh web` arguments                                                                                                                      |
-| `controlPlane.extraEnv`                                  | `[]`                                        | Extra environment variables for credentials the control plane needs itself, such as `BUILDKITE_API_TOKEN` from a Secret; never sandbox secrets |
-| `controlPlane.podAnnotations` / `controlPlane.podLabels` | `{}`                                        | Extra pod metadata                                                                                                                             |
-| `controlPlane.persistence.enabled`                       | `true`                                      | `false` replaces the data PVC with an emptyDir; every restart then loses sessions, the credential store, and the registration token            |
-| `controlPlane.persistence.size`                          | `5Gi`                                       | Data volume size                                                                                                                               |
-| `controlPlane.persistence.storageClass`                  | `""`                                        | Data volume StorageClass; required when the cluster has no default                                                                             |
-| `runner.controlPlaneUrl`                                 | Tunnel Service URL                          | Tunnel address written into `dsh-yawn-runner-config`; only change it for an unusual layout                                                     |
-| `oidc.enabled`                                           | `false`                                     | Add the oauth2-proxy sidecar and Service                                                                                                       |
-| `oidc.hostname`                                          | `""`                                        | Required when enabled: bare host, no scheme                                                                                                    |
-| `oidc.image`                                             | `quay.io/oauth2-proxy/oauth2-proxy:v7.15.4` | Proxy image                                                                                                                                    |
-| `oidc.existingSecret`                                    | `dsh-yawn-oidc`                             | Secret with the proxy's OIDC and cookie configuration                                                                                          |
-| `oidc.emailDomains`                                      | `*`                                         | `OAUTH2_PROXY_EMAIL_DOMAINS`; restrict before trusting an issuer's whole user base                                                             |
-| `oidc.extraEnv`                                          | `[]`                                        | Extra environment variables for the proxy                                                                                                      |
-| `service.type`                                           | `ClusterIP`                                 | Service exposure type                                                                                                                          |
-| `service.port`                                           | `80`                                        | Service port in front of the proxy's 4180                                                                                                      |
-| `service.annotations`                                    | `{}`                                        | Annotations for the Service                                                                                                                    |
-| `controlPlane.sandboxManager`                            | `{}`                                        | Default sandbox-manager settings; unset means no profile is seeded, so no sandbox can be provisioned                                           |
+| Key                                                      | Default                                  | Description                                                                                                                                    |
+| -------------------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `controlPlane.image.repository`                          | `ghcr.io/zhming0/dsh-yawn-control-plane` | Control-plane image                                                                                                                            |
+| `controlPlane.image.tag`                                 | `.Chart.appVersion`                      | Released tag                                                                                                                                   |
+| `controlPlane.resources`                                 | `250m/512Mi → 2Gi`                       | Container resource requests and limits                                                                                                         |
+| `controlPlane.extraArgs`                                 | `[]`                                     | Extra `dsh web` arguments                                                                                                                      |
+| `controlPlane.extraEnv`                                  | `[]`                                     | Extra environment variables for credentials the control plane needs itself, such as `BUILDKITE_API_TOKEN` from a Secret; never sandbox secrets |
+| `controlPlane.podAnnotations` / `controlPlane.podLabels` | `{}`                                     | Extra pod metadata                                                                                                                             |
+| `controlPlane.persistence.enabled`                       | `true`                                   | `false` replaces the data PVC with an emptyDir; every restart then loses sessions, the credential store, and the registration token            |
+| `controlPlane.persistence.size`                          | `5Gi`                                    | Data volume size                                                                                                                               |
+| `controlPlane.persistence.storageClass`                  | `""`                                     | Data volume StorageClass; required when the cluster has no default                                                                             |
+| `runner.controlPlaneUrl`                                 | Tunnel Service URL                       | Tunnel address written into `dsh-yawn-runner-config`; only change it for an unusual layout                                                     |
+| `oidc.enabled`                                           | `false`                                  | Enable built-in OIDC sign-in and expose the control plane Service                                                                              |
+| `oidc.hostname`                                          | `""`                                     | Required when enabled: bare host, no scheme                                                                                                    |
+| `oidc.existingSecret`                                    | `dsh-yawn-oidc`                          | Secret holding `OIDC_ISSUER`, `OIDC_CLIENT_ID`, and `OIDC_CLIENT_SECRET`                                                                       |
+| `oidc.emailDomains`                                      | `*`                                      | Exact email domains admitted; restrict before trusting an issuer's whole user base                                                             |
+| `oidc.scopes`                                            | `openid email profile`                   | OIDC scopes requested at the authorization endpoint                                                                                            |
+| `oidc.clientAuthMethod`                                  | `client_secret_post`                     | Token-endpoint client authentication: `client_secret_post`, `client_secret_basic`, or `none`                                                   |
+| `oidc.cookieMaxAgeDays`                                  | `30`                                     | Lifetime of the signed browser session                                                                                                         |
+| `service.type`                                           | `ClusterIP`                              | Service exposure type                                                                                                                          |
+| `service.port`                                           | `80`                                     | Service port in front of the control plane's 3000                                                                                              |
+| `service.annotations`                                    | `{}`                                     | Annotations for the Service                                                                                                                    |
+| `controlPlane.sandboxManager`                            | `{}`                                     | Default sandbox-manager settings; unset means no profile is seeded, so no sandbox can be provisioned                                           |
 
 ## Sandbox-manager settings as values
 

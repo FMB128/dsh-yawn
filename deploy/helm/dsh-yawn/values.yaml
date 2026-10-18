@@ -16,8 +16,7 @@ controlPlane:
       memory: 512Mi
     limits:
       memory: 2Gi
-  # Extra arguments passed to the dsh web app, e.g. --trusted-host for
-  # exposures without the bundled oauth2-proxy.
+  # Extra arguments passed to the dsh web app.
   extraArgs: []
   # Extra environment variables for the control-plane container, appended after
   # the fixed ones. This is how the control plane gets a credential it needs in
@@ -73,37 +72,37 @@ runner:
 # dsh-yawn-registration-token Secret the warm pool mounts, and hands it to
 # Docker and Buildkite sandboxes when it starts them.
 
-# The distribution fronts dsh with oauth2-proxy: dsh binds pod loopback and
-# its only browser authentication is the startup `?token=` URL. The
-# /launch-token shortcut is mounted either way — it is safe without the proxy
-# because port 3000 never leaves the pod — so the default install works over
-# `kubectl port-forward` with no identity provider. With the proxy enabled,
-# the dsh container additionally gains --trusted-host, and the Service below
-# exposes the proxy's port. Create the Secret it reads first (see NOTES.txt);
-# until it exists the pod never becomes Ready.
+# Built-in OIDC sign-in. dsh binds pod loopback by default and its only browser
+# authentication is the startup `?token=` URL, so the default install works over
+# `kubectl port-forward` with no identity provider and the optional
+# /launch-token shortcut. Enabling oidc does not add a proxy sidecar: the
+# control plane runs the authorization-code flow itself, admits the browser
+# from its signed session cookie, binds the pod address for the Service, and
+# gains --trusted-host. Create the Secret it reads first (see NOTES.txt); until
+# it exists the pod never becomes Ready. Register the provider's redirect URI
+# as https://<hostname>/dsh-yawn/auth/callback.
 oidc:
   enabled: false
   # Required when enabled: a bare host, no scheme. Handed to dsh as
-  # --trusted-host and used in the proxy's redirect URL.
+  # --trusted-host and used in the callback URL.
   hostname: ""
-  image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.4
+  # Keys: OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET.
   existingSecret: dsh-yawn-oidc
-  # Accept any email the issuer authenticates. Restrict this to your domain,
-  # or use authenticated-emails-file, before trusting the issuer's whole user
-  # base with your control plane.
+  # Accept any email the issuer authenticates. Restrict this to your domain
+  # before trusting the issuer's whole user base with your control plane.
   emailDomains: "*"
-  # Extra environment variables for the proxy, appended after the fixed ones.
-  # For an identity provider that needs a non-default flag, for example:
-  #   - name: OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL
-  #     value: "true"
-  extraEnv: []
+  scopes: "openid email profile"
+  # How the client authenticates at the token endpoint:
+  # client_secret_post, client_secret_basic, or none for a public client.
+  clientAuthMethod: client_secret_post
+  # The signed browser session survives restarts for this many days.
+  cookieMaxAgeDays: 30
 
-# The Service in front of the oauth2-proxy (requires oidc.enabled). ClusterIP
-# is the anchor other controllers point at: an Ingress, a Gateway API route,
-# or a Service of your own selecting on the pod labels. Set type LoadBalancer
-# to expose it directly. Whatever fronts dsh must serve https (the proxy's
-# cookie is secure) and pass WebSockets and large RPC bodies — see
-# docs/control-plane.md for an nginx-ingress example.
+# The Service in front of the control plane (requires oidc.enabled). ClusterIP
+# is the anchor other controllers point at: an Ingress, a Gateway API route, or
+# a Service of your own selecting on the pod labels. Set type LoadBalancer to
+# expose it directly. Whatever fronts dsh must serve https and pass WebSockets
+# and large RPC bodies — see docs/control-plane.md for an nginx-ingress example.
 service:
   type: ClusterIP
   port: 80

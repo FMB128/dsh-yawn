@@ -114,9 +114,12 @@ namespace its own Role and tunnel Service live in. */}}
 {{- end }}
 {{- end -}}
 {{- if and .Values.oidc.enabled (not .Values.oidc.hostname) -}}
-{{- fail "oidc.hostname is required when oidc.enabled is true: it is handed to dsh as --trusted-host and used in the proxy redirect URL." }}
+{{- fail "oidc.hostname is required when oidc.enabled is true: it is handed to dsh as --trusted-host and used in the built-in sign-in callback URL." }}
+{{- end -}}
+{{- if and .Values.oidc.enabled (not .Values.oidc.existingSecret) -}}
+{{- fail "oidc.existingSecret is required when oidc.enabled is true: it holds OIDC_ISSUER, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET." }}
 {{- end -}}
 {{- if and (ne .Values.service.type "ClusterIP") (not .Values.oidc.enabled) -}}
-{{- fail "service.type only exposes the oauth2-proxy, and dsh itself binds pod loopback, so there is nothing to expose while oidc.enabled is false. Enable oidc or keep service.type ClusterIP." }}
+{{- fail "service.type exposes the control plane's built-in sign-in, and dsh itself binds pod loopback, so there is nothing to expose while oidc.enabled is false. Enable oidc or keep service.type ClusterIP." }}
 {{- end -}}
 {{- end -}}
