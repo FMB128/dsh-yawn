@@ -21,6 +21,7 @@ import {
 import { SandboxProfileChip } from "./profile.js";
 import { RepositoryDirectoryFlow } from "./repository-directory-flow.js";
 import { SandboxStatusTab } from "./sandbox.js";
+import { GitCredentialsSettings } from "./git-credentials.js";
 import { SandboxesSettings } from "./settings.js";
 import { SecretsSettings } from "./secrets.js";
 import { installMediaSession } from "./media-session.js";
@@ -33,8 +34,9 @@ import { installMediaSession } from "./media-session.js";
 export const inject = ["remote", "slots"];
 
 /** Mount the Remote endpoints, replace folder picking with repository entry,
- * add the Instructions, Secrets, Sandboxes, MCP, and Notifications sections to
- * the Settings page, and show a browser notification when a turn finishes. */
+ * add the Instructions, Secrets, Git credentials, Sandboxes, MCP, and
+ * Notifications sections to the Settings page, and show a browser notification
+ * when a turn finishes. */
 export async function apply(ctx: Context) {
   const disposeRemote = await ctx.remote.$mount(yawnRemote);
 
@@ -74,6 +76,16 @@ export async function apply(ctx: Context) {
             name,
           ),
         ),
+      setGitHost: async (host: string, username: string, secret: string) =>
+        unwrap(
+          await remoteCtx.remote.sandboxManager.setGitHost(
+            host,
+            username,
+            secret,
+          ),
+        ),
+      deleteGitHost: async (host: string) =>
+        unwrap(await remoteCtx.remote.sandboxManager.deleteGitHost(host)),
     });
     const injectedInstructions = () => ({
       getInstructions: async () =>
@@ -142,8 +154,18 @@ export async function apply(ctx: Context) {
         yield remoteCtx.slots.register(
           {
             name: "settings.section",
+            id: "dsh-yawn.git-credentials",
+            order: 33,
+            label: "Git credentials",
+            inject: injectedSecrets,
+          },
+          GitCredentialsSettings,
+        );
+        yield remoteCtx.slots.register(
+          {
+            name: "settings.section",
             id: "dsh-yawn.mcp",
-            order: 34,
+            order: 35,
             label: "MCP",
             inject: injectedMcp,
           },
@@ -323,7 +345,7 @@ export async function apply(ctx: Context) {
         {
           name: "settings.section",
           id: "dsh-yawn.notifications",
-          order: 33,
+          order: 34,
           label: "Notifications",
         },
         NotificationsSettings,

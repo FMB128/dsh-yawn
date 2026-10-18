@@ -63,7 +63,8 @@ in a sandbox of its own. Hence the name: you can lay back and yawn :)
 - Sign-in in front of the Web UI. The Helm chart runs oauth2-proxy against your
   OIDC provider; on a VM, bring your own.
 - A model API key, added in the Web UI.
-- Optional: a `GITHUB_TOKEN` for private repositories and pushes.
+- Optional: a `GITHUB_TOKEN`, or Git credentials for another host, for private
+  repositories and pushes.
 
 Setup: [`docs/installations.md`](docs/installations.md).
 
@@ -98,7 +99,7 @@ To clean up: `docker rm -f dsh-yawn`. What each flag does is in the
 | ---------------------------------------------------------- | --------------------------------------------------------------------------- |
 | [`docs/installations.md`](docs/installations.md)           | installation index: control plane, runner, credentials                      |
 | [`docs/control-plane.md`](docs/control-plane.md)           | the control plane on Kubernetes (Helm chart) or on a VM with Docker         |
-| [`docs/credentials.md`](docs/credentials.md)               | the secret store: `GITHUB_TOKEN`, the Web UI, control-plane credentials     |
+| [`docs/credentials.md`](docs/credentials.md)               | the secret store: `GITHUB_TOKEN` and other Git hosts, the Web UI, control-plane credentials |
 | [`docs/runners/kubernetes.md`](docs/runners/kubernetes.md) | sandboxes as Kubernetes pods: install, security model, what survives a wake |
 | [`docs/runners/buildkite.md`](docs/runners/buildkite.md)   | sandboxes as Buildkite builds: pipeline, idle checkpoints, limits           |
 | [`docs/faq.md`](docs/faq.md)                               | launch tokens, sandbox lifecycle, the runner tunnel, plugins                |

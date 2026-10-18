@@ -8,11 +8,14 @@ import {
 } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { SettingsSectionOwnerProps } from "@deepseek-ai/dsh-client-ui-settings/client";
 
+import { gitHostsForSecret } from "../git-hosts.js";
 import type { SecretSettingsView } from "../secrets-remote.js";
 import { GLOBAL_SCOPE, ScopeSelector } from "./scope-selector.js";
 import {
+  actionsStyle,
   addButtonStyle,
   cardStyle,
+  codeStyle,
   dialogFormStyle,
   errorStyle,
   fieldLabelStyle,
@@ -20,10 +23,12 @@ import {
   groupHeadStyle,
   groupStyle,
   hintStyle,
+  identityStyle,
   introStyle,
   listStyle,
   monoStyle,
   mutedStyle,
+  rowStyle,
   sectionStyle,
   titleStyle,
 } from "./settings-page-style.js";
@@ -114,6 +119,8 @@ export function SecretsSettings({
   const workspaces = (settings?.workspaces ?? []).filter(
     (workspace) => workspace.names.length > 0,
   );
+  const gitHostsForName = (name: string) =>
+    settings === undefined ? [] : gitHostsForSecret(settings.gitHosts, name);
 
   // A row draws its own top divider; the global card has no header above
   // its first row, so that one goes without.
@@ -123,6 +130,7 @@ export function SecretsSettings({
         key={name}
         name={name}
         divider={divideFirst || index > 0}
+        gitHosts={gitHostsForName(name)}
         overridesGlobal={scope !== GLOBAL_SCOPE && globalNames.includes(name)}
         confirming={confirming?.scope === scope && confirming.name === name}
         disabled={pending}
@@ -217,6 +225,7 @@ export function SecretsSettings({
 interface SecretRowProps {
   name: string;
   divider: boolean;
+  gitHosts: string[];
   overridesGlobal: boolean;
   confirming: boolean;
   disabled: boolean;
@@ -230,6 +239,7 @@ interface SecretRowProps {
 function SecretRow({
   name,
   divider,
+  gitHosts,
   overridesGlobal,
   confirming,
   disabled,
@@ -240,15 +250,16 @@ function SecretRow({
 }: SecretRowProps) {
   return (
     <li style={divider ? rowStyle : { ...rowStyle, borderTop: "none" }}>
-      <span
-        style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}
-      >
-        <code style={nameStyle}>{name}</code>
+      <span style={identityStyle}>
+        <code style={codeStyle}>{name}</code>
+        {gitHosts.map((host) => (
+          <Tag key={host} tone="outline">
+            Git: {host}
+          </Tag>
+        ))}
         {overridesGlobal ? <Tag tone="outline">overrides global</Tag> : null}
       </span>
-      <span
-        style={{ display: "flex", alignItems: "center", gap: 4, flex: "none" }}
-      >
+      <span style={actionsStyle}>
         {confirming ? (
           <>
             <span style={{ ...mutedStyle, marginRight: 4 }}>Delete?</span>
@@ -353,8 +364,8 @@ function SecretDialog({
     } else if (scope !== GLOBAL_SCOPE && settings.global.includes(trimmed)) {
       hints.push("Overrides the global value in this workspace.");
     }
-    if (trimmed === "GITHUB_TOKEN") {
-      hints.push("Also used as the Git credential for github.com.");
+    for (const host of gitHostsForSecret(settings.gitHosts, trimmed)) {
+      hints.push(`Also used as the Git credential for ${host}.`);
     }
   }
 
@@ -471,19 +482,6 @@ const cardHeadStyle: CSSProperties = {
   gap: 12,
   padding: "12px 16px",
 };
-
-const rowStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: 12,
-  minHeight: 44,
-  boxSizing: "border-box",
-  padding: "6px 10px 6px 16px",
-  borderTop: "0.5px solid var(--dsw-alias-border-l2)",
-};
-
-const nameStyle: CSSProperties = { ...monoStyle, fontSize: 13 };
 
 /** The native select drawn like the Input primitive beside it. */
 const selectStyle: CSSProperties = {

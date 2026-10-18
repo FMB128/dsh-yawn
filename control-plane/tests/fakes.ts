@@ -45,6 +45,8 @@ export class FakeRunnerClient {
     exitCode?: number;
   }> = [];
   readonly setupRequests: Array<{ revision: string }> = [];
+  /** The clone URL of each setup call, in order. */
+  readonly setupRepositoryUrls: string[] = [];
 
   async health() {
     if (!this.healthy) {
@@ -91,8 +93,9 @@ export class FakeRunnerClient {
     this.gitCredentials.push(...credentials);
   }
 
-  async setup(request: { revision: string }) {
+  async setup(request: { repositoryUrl: string; revision: string }) {
     this.setups += 1;
+    this.setupRepositoryUrls.push(request.repositoryUrl);
     this.setupRequests.push({ revision: request.revision });
     return { ran: this.setups === 1 };
   }

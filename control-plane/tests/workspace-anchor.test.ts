@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   createRepositoryAnchor,
+  httpsRepositoryUrl,
   normalizeWorkspaceRepositoryUrl,
   repositoryForAnchor,
   repositoryTitle,
@@ -45,7 +46,7 @@ describe("workspace anchors", () => {
     ).toThrow("query or fragment");
     expect(() =>
       normalizeWorkspaceRepositoryUrl("file:///home/user/repo"),
-    ).toThrow("HTTP, HTTPS, SSH, or Git");
+    ).toThrow("HTTPS");
   });
 
   it("creates one durable host anchor per repository", async () => {
@@ -71,6 +72,42 @@ describe("workspace anchors", () => {
     expect((await stat(first.path)).mode & 0o777).toBe(0o700);
     expect((await stat(join(first.path, "repository.json"))).mode & 0o777).toBe(
       0o600,
+    );
+  });
+
+  it("converts SSH repository URLs to HTTPS for new anchors", () => {
+    expect(httpsRepositoryUrl("git@git.fml128.ch:FML128/repo.git")).toBe(
+      "https://git.fml128.ch/FML128/repo.git",
+    );
+    expect(httpsRepositoryUrl("ssh://git@git.fml128.ch/FML128/repo.git")).toBe(
+      "https://git.fml128.ch/FML128/repo.git",
+    );
+    expect(httpsRepositoryUrl("https://git.fml128.ch/FML128/repo")).toBe(
+      "https://git.fml128.ch/FML128/repo",
+    );
+    expect(() =>
+      httpsRepositoryUrl("ssh://git@git.fml128.ch:8443/FML128/repo.git"),
+    ).toThrow("HTTPS");
+    expect(() => httpsRepositoryUrl("git://git.fml128.ch/FML128/repo")).toThrow(
+      "HTTPS",
+    );
+    expect(() =>
+      httpsRepositoryUrl("http://git.fml128.ch/FML128/repo"),
+    ).toThrow("HTTPS");
+    expect(() =>
+      httpsRepositoryUrl("ssh://git:secret@git.fml128.ch/FML128/repo"),
+    ).toThrow("password");
+  });
+
+  it("creates a new anchor from the HTTPS form of an SSH URL", async () => {
+    const anchor = await createRepositoryAnchor(
+      directory,
+      "git@git.fml128.ch:FML128/repo.git",
+    );
+
+    expect(anchor.repositoryUrl).toBe("https://git.fml128.ch/FML128/repo");
+    expect(await repositoryForAnchor(directory, anchor.path)).toBe(
+      "https://git.fml128.ch/FML128/repo",
     );
   });
 });

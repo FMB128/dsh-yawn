@@ -1,12 +1,27 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
+import {
+  ENVIRONMENT_NAME,
+  GITHUB_HOST,
+  GITHUB_SECRET,
+  GITHUB_USERNAME,
+  hasGithubCredentialRow,
+  isGitHostCredential,
+  normalizeGitHost,
+  normalizeGitSecretName,
+  normalizeGitUsername,
+  type GitHostCredential,
+} from "./git-hosts.js";
+
 interface BrokerFile {
-  version: 2;
+  version: 3;
   /** The global scope, delivered to every sandbox. */
   secrets: Record<string, string>;
   /** Per-workspace scopes, keyed by repository URL; same names override global. */
   workspaces: Record<string, Record<string, string>>;
+  /** The hosts Git may ask about, and which secret answers each. */
+  gitHosts: GitHostCredential[];
 }
 
 export interface BrokerOptions {
@@ -28,7 +43,12 @@ export const GLOBAL_SECRET_SCOPE: SecretScope = { kind: "global" };
 
 /** Durable authority stays on the host; only current values are pushed to a runner. */
 export class CredentialBroker {
-  private state: BrokerFile = { version: 2, secrets: {}, workspaces: {} };
+  private state: BrokerFile = {
+    version: 3,
+    secrets: {},
+    workspaces: {},
+    gitHosts: [],
+  };
   private writeChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: BrokerOptions) {}
@@ -47,7 +67,7 @@ export class CredentialBroker {
       );
     } catch (error) {
       if (isNotFound(error)) {
-        this.state = { version: 2, secrets: {}, workspaces: {} };
+        this.state = { version: 3, secrets: {}, workspaces: {}, gitHosts: [] };
       } else {
         throw error;
       }
@@ -76,7 +96,7 @@ export class CredentialBroker {
     name: string,
     value: string,
   ): Promise<void> {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    if (!ENVIRONMENT_NAME.test(name)) {
       throw new Error(`invalid environment variable name: ${name}`);
     }
     if (scope.kind === "global") {
@@ -106,26 +126,100 @@ export class CredentialBroker {
     await this.persist();
   }
 
+  /** The configured Git hosts, in table order. */
+  gitHosts(): GitHostCredential[] {
+    return this.state.gitHosts.map((entry) => ({ ...entry }));
+  }
+
+  /** Add or replace the credential for one host. */
+  async setGitHost(
+    host: string,
+    username: string,
+    secret: string,
+  ): Promise<void> {
+    const entry: GitHostCredential = {
+      host: normalizeGitHost(host),
+      username: normalizeGitUsername(username),
+      secret: normalizeGitSecretName(secret),
+    };
+    const index = this.state.gitHosts.findIndex(
+      (existing) => existing.host === entry.host,
+    );
+    if (index === -1) {
+      this.state.gitHosts.push(entry);
+    } else {
+      this.state.gitHosts[index] = entry;
+    }
+    await this.persist();
+  }
+
+  async deleteGitHost(host: string): Promise<void> {
+    const normalized = normalizeGitHost(host);
+    const index = this.state.gitHosts.findIndex(
+      (existing) => existing.host === normalized,
+    );
+    if (index === -1) {
+      return;
+    }
+    this.state.gitHosts.splice(index, 1);
+    await this.persist();
+  }
+
   /**
-   * A GITHUB_TOKEN secret doubles as the github.com credential, so pasting a
-   * token (fine-grained PAT or `gh auth token`) is the whole GitHub setup. A
-   * workspace-scoped token serves that workspace's clones. The workspace's own
-   * host does not matter: a session in any workspace may clone from GitHub.
+   * The credentials Git may ask for. A table row whose secret is present wins;
+   * a row whose secret is absent is skipped. A row for github.com replaces the
+   * built-in `GITHUB_TOKEN` entry even before its secret is set, so removing
+   * the row is how a user falls back. A workspace-scoped secret serves that
+   * workspace's clones, and the workspace's own host does not matter: a
+   * session in any workspace may clone from any configured host.
    */
   async gitCredentials(
     repositoryUrl: string,
   ): Promise<Array<{ host: string; username: string; password: string }>> {
     // Read through the merge, so scope precedence has one definition.
-    const token = this.secrets({
+    return this.resolvedGitCredentials({
       kind: "workspace",
       repositoryUrl,
-    })["GITHUB_TOKEN"];
-    if (token === undefined) {
-      return [];
+    });
+  }
+
+  private resolvedGitCredentials(
+    scope: SecretScope,
+  ): Array<{ host: string; username: string; password: string }> {
+    const secrets = this.secrets(scope);
+    const credentials: Array<{
+      host: string;
+      username: string;
+      password: string;
+    }> = [];
+    const hosts = new Set<string>();
+    for (const entry of this.state.gitHosts) {
+      if (hosts.has(entry.host)) {
+        continue;
+      }
+      const password = secrets[entry.secret];
+      if (password === undefined) {
+        continue;
+      }
+      credentials.push({
+        host: entry.host,
+        username: entry.username,
+        password,
+      });
+      hosts.add(entry.host);
     }
-    return [
-      { host: "github.com", username: "x-access-token", password: token },
-    ];
+    const githubToken = secrets[GITHUB_SECRET];
+    if (
+      !hasGithubCredentialRow(this.state.gitHosts) &&
+      githubToken !== undefined
+    ) {
+      credentials.push({
+        host: GITHUB_HOST,
+        username: GITHUB_USERNAME,
+        password: githubToken,
+      });
+    }
+    return credentials;
   }
 
   /** The names stored in one scope, before the global merge. */
@@ -207,12 +301,35 @@ function isWorkspaceScopeMap(
   );
 }
 
+function parseGitHosts(value: unknown): GitHostCredential[] {
+  if (!Array.isArray(value)) {
+    throw new Error("credential broker file has an unsupported format");
+  }
+  const hosts = new Map<string, GitHostCredential>();
+  for (const entry of value) {
+    if (!isGitHostCredential(entry)) {
+      throw new Error("credential broker file has an unsupported format");
+    }
+    try {
+      const host = normalizeGitHost(entry.host);
+      hosts.set(host, {
+        host,
+        username: normalizeGitUsername(entry.username),
+        secret: normalizeGitSecretName(entry.secret),
+      });
+    } catch {
+      throw new Error("credential broker file has an unsupported format");
+    }
+  }
+  return [...hosts.values()];
+}
+
 function parseBrokerFile(value: unknown): BrokerFile {
   if (
     typeof value !== "object" ||
     value === null ||
     !("version" in value) ||
-    (value.version !== 1 && value.version !== 2) ||
+    (value.version !== 1 && value.version !== 2 && value.version !== 3) ||
     !("secrets" in value) ||
     !isSecretRecord(value.secrets)
   ) {
@@ -220,20 +337,33 @@ function parseBrokerFile(value: unknown): BrokerFile {
   }
   if (value.version === 1) {
     return {
-      version: 2,
+      version: 3,
       secrets: value.secrets,
       workspaces: {},
+      gitHosts: [],
     };
   }
   if (!("workspaces" in value) || !isWorkspaceScopeMap(value.workspaces)) {
     throw new Error("credential broker file has an unsupported format");
   }
+  if (value.version === 2) {
+    return {
+      version: 3,
+      secrets: value.secrets,
+      workspaces: value.workspaces,
+      gitHosts: [],
+    };
+  }
+  if (!("gitHosts" in value)) {
+    throw new Error("credential broker file has an unsupported format");
+  }
   // Keep only the known fields so retired ones (like the removed device-flow
   // token) drop out of the file on the next write.
   return {
-    version: 2,
+    version: 3,
     secrets: value.secrets,
     workspaces: value.workspaces,
+    gitHosts: parseGitHosts(value.gitHosts),
   };
 }
 

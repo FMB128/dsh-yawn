@@ -64,6 +64,39 @@ export const mutedStyle: CSSProperties = {
   color: "var(--dsw-alias-label-tertiary)",
 };
 
+/** A settings list row: name and tags on the left, actions on the right. */
+export const rowStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  minHeight: 44,
+  boxSizing: "border-box",
+  padding: "6px 10px 6px 16px",
+  borderTop: "0.5px solid var(--dsw-alias-border-l2)",
+};
+
+/** The first row in a card, which has no divider above it. */
+export const firstRowStyle: CSSProperties = { ...rowStyle, borderTop: "none" };
+
+export const identityStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  flexWrap: "wrap",
+  gap: 8,
+  minWidth: 0,
+};
+
+export const actionsStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 4,
+  flex: "none",
+};
+
+/** A code-like value inside a settings row. */
+export const codeStyle: CSSProperties = { ...monoStyle, fontSize: 13 };
+
 /** The dashed full-width "+ Add …" button under a list. */
 export const addButtonStyle: CSSProperties = {
   display: "flex",

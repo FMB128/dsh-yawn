@@ -35,6 +35,36 @@ repositories fail at `git clone`. A workspace-scoped token serves that
 workspace's clones instead of the global one, so two Workspaces can use two
 tokens.
 
+## Other Git hosts
+
+`GITHUB_TOKEN` is the built-in github.com credential. Other hosts go on
+**Settings → Git credentials**, one row per host:
+
+| Host                   | Username       | Secret            |
+| ---------------------- | -------------- | ----------------- |
+| `git.fml128.ch`        | `oauth2`       | `FORGE_TOKEN`     |
+| `bitbucket.org`        | `x-token-auth` | `BITBUCKET_TOKEN` |
+| `git.example.com:8443` | `oauth2`       | `EXAMPLE_TOKEN`   |
+
+The host is matched exactly as Git sends it, including a non-default port, and
+a hyphenated hostname needs no special spelling. The username defaults to
+`oauth2`, which GitLab and many token-based forges accept; use the forge's own
+convention when it differs. The secret is resolved through the same two scopes
+as every other secret, so a workspace-scoped secret overrides the global one
+inside that workspace. A row whose secret is not set is skipped, and the page
+marks it **not set**. A row for github.com replaces the built-in `GITHUB_TOKEN`
+entry even before its secret is set; remove the row to fall back.
+
+New Workspaces clone over HTTPS. An SSH clone URL is converted to HTTPS when
+the Workspace is created, so a host's token is usable; an explicit SSH port,
+HTTP,
+and `git://` are rejected because the right HTTPS port is ambiguous or the
+transport is unauthenticated—enter the HTTPS URL instead. SSH keys are not
+managed yet, and an existing SSH Workspace keeps the URL it was created with;
+recreate it from the HTTPS URL to use this table. The old Workspace and its
+workspace-scoped secrets stay with the SSH URL, so add those secrets again for
+the HTTPS Workspace.
+
 ## Set a secret
 
 Secrets go in through the Web UI: **Settings → Secrets**. It is the only way
