@@ -5,7 +5,7 @@ echo "--- :docker: Building the control-plane image"
 docker buildx bake control-plane-dev --load
 
 cleanup() {
-  docker rm -f dsh-yawn-check-loopback dsh-yawn-check-bind >/dev/null 2>&1 || true
+  docker rm -f dsh-yawn-check-loopback dsh-yawn-check-bind dsh-yawn-check-passcode >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -51,6 +51,28 @@ address=$(docker exec dsh-yawn-check-bind sh -c "hostname -i | awk '{print \$1}'
 IFS=. read -r a b c d <<<"$address"
 docker exec dsh-yawn-check-bind grep -q "$(printf '%02X%02X%02X%02X:0BB8' "$d" "$c" "$b" "$a")" /proc/net/tcp
 echo "container address bind ($address)"
+
+# The passcode row has to mount from the image's own copy of the package, and
+# the login page has to win over dsh's 401. dsh treats a row that fails to
+# activate as a warning, so the entrypoint also has to reject a short passcode
+# before it starts instead of falling back to the token URL.
+echo "+++ :mag: Checking the passcode login"
+docker run -d --name dsh-yawn-check-passcode -e DSH_YAWN_PASSCODE=correct-horse-battery dsh-yawn-control-plane:dev >/dev/null
+wait_for_listener dsh-yawn-check-passcode
+docker exec dsh-yawn-check-passcode node -e \
+  "fetch('http://127.0.0.1:3000/login').then((r) => process.exit(r.status === 200 ? 0 : 1), () => process.exit(1))"
+docker exec dsh-yawn-check-passcode node -e \
+  "fetch('http://127.0.0.1:3000/', { redirect: 'manual' }).then((r) => process.exit(r.status === 303 && r.headers.get('location') === '/login' ? 0 : 1), () => process.exit(1))"
+if docker run --rm -e DSH_YAWN_PASSCODE=short dsh-yawn-control-plane:dev >/dev/null 2>&1; then
+  echo "a short passcode started the control plane" >&2
+  exit 1
+fi
+if docker run --rm -e DSH_YAWN_PASSCODE=correct-horse-battery \
+  -e DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1 dsh-yawn-control-plane:dev >/dev/null 2>&1; then
+  echo "the passcode and launch-token routes were both accepted" >&2
+  exit 1
+fi
+echo "passcode login serves, short passcode and mixed routes refuse to start"
 
 # The entrypoint's other job is joining the mounted socket's group before it
 # drops root. A socket owned by a known group stands in for the Docker one, and

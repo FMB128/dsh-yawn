@@ -158,11 +158,14 @@ configuration, and forward the server:
 kubectl -n dsh-yawn port-forward deploy/dsh-yawn-control-plane 3000:3000
 ```
 
-Open `http://localhost:3000/launch-token` when the control plane runs with
-`DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1` (the oauth2-proxy patch sets it);
-otherwise take the token from `kubectl -n dsh-yawn logs
-deploy/dsh-yawn-control-plane | grep 'dsh web:'`. Restart the port-forward
-after a rollout; it does not follow the replacement pod.
+Open `http://localhost:3000/` and enter the passcode when the release uses
+`auth.passcode`. When dsh is mounted with
+`DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1` (the chart's oauth2-proxy path
+and `controlPlane.launchToken` both mount it), open
+`http://localhost:3000/launch-token`, or take the tokenized URL from
+`kubectl -n dsh-yawn logs deploy/dsh-yawn-control-plane | grep 'dsh web:'`.
+Restart the port-forward after a rollout; it does not follow the replacement
+pod.
 
 In addition to the steps above, ask the model to run
 `docker run --rm -v "$PWD:/src" alpine sh -c 'echo <content> > /src/<file>'`.

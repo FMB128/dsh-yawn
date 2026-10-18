@@ -10,23 +10,31 @@ Docker daemon.
   containers. The image's entrypoint joins the socket's group and drops root
   before dsh starts, so the command needs no `--group-add` and no host-side
   group lookup.
-- `DSH_YAWN_BIND_ALL=1` lets the published port reach the Web UI. Kubernetes
-  leaves it unset and keeps dsh on pod loopback behind oauth2-proxy.
+- `DSH_YAWN_BIND_ALL=1` makes dsh listen on the container address so the
+  published port reaches the Web UI. `DSH_YAWN_PASSCODE` turns on the passcode
+  login; without a passcode the UI falls back to dsh's startup token.
 - The sandbox profile needs only `backend: docker`: the runner image defaults
   to the tag matching the control plane, and runners dial back through
   `host.docker.internal` on the published tunnel port 8081.
 - The Web UI's edits persist into `/data/.dsh/profiles/web/cordis.patch.yml`
   inside the container if you would rather edit them directly.
 
-### What is `/launch-token`?
+### How do users sign in?
 
-DeepSeek Harness signs each browser in with a per-process token and exchanges it for a
-cookie that lasts 30 days. `/launch-token` redirects you to the tokenized URL,
-so you never copy a token out of the logs. Open it through the address you use
-to reach the control plane, such as
-`http://localhost:3000/launch-token` or `https://dsh.example.com/launch-token`.
-The route hands the token to anyone who can reach dsh's port; behind the
-distribution's oauth2-proxy, that means authenticated users only.
+Set `DSH_YAWN_PASSCODE` (Docker) or `auth.passcode` (Helm), open the control
+plane's address, and enter the passcode. The control plane serves `/login` and,
+after a correct passcode, completes dsh's own token exchange on the server. The
+launch token never reaches the browser, and the dsh cookie lasts 30 days, so a
+browser signs in once.
+
+The Helm chart can use oauth2-proxy and an OIDC provider instead: set
+`oidc.enabled` and leave `auth.passcode` empty. In that mode the proxy is the
+sign-in, and the chart still mounts `/launch-token` until the OIDC handoff lands.
+
+`/launch-token` is otherwise break-glass only: `controlPlane.launchToken` (Helm)
+or `DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1` (Docker) mounts a route that
+hands dsh's process token to anyone who can reach the port. It is off by
+default and cannot be combined with a passcode.
 Details: [`control-plane.md`](control-plane.md#expose-the-web-ui).
 
 ### What is a sandbox's lifecycle like?

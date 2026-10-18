@@ -61,16 +61,38 @@ large RPC bodies; docs/control-plane.md has an nginx-ingress
 example.
 {{- end }}
 
-{{- else }}
+{{- else if .Values.controlPlane.launchToken }}
 
-dsh is reachable over a port-forward only. In another terminal:
+Break-glass mode is on: the control plane serves `/launch-token`, which hands
+dsh's process token to anyone who can reach port 3000. Reach it over a
+port-forward only:
 
   kubectl -n {{ .Release.Namespace }} port-forward deploy/{{ include "dsh-yawn.fullname" . }} 3000:3000
 
-Then open http://localhost:3000/launch-token — or take the tokenized URL from
-the control plane log and open it directly:
+Then open http://localhost:3000/launch-token.
 
-  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "dsh-yawn.fullname" . }} | grep 'dsh web:'
+{{- else }}
+
+The control plane serves a passcode login at `/login`.
+
+{{- if eq .Values.service.type "ClusterIP" }}
+
+In another terminal:
+
+  kubectl -n {{ .Release.Namespace }} port-forward deploy/{{ include "dsh-yawn.fullname" . }} 3000:3000
+
+Then open http://localhost:3000/ and enter the passcode from auth.passcode (or
+auth.existingSecret).
+
+{{- else }}
+
+Once the Service's address resolves for {{ .Values.auth.hostname }}, open
+
+  https://{{ .Values.auth.hostname }}/
+
+and enter the passcode from auth.passcode (or auth.existingSecret).
+
+{{- end }}
 
 {{- end }}
 

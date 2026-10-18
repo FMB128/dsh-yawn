@@ -1,6 +1,6 @@
 {{- include "dsh-yawn.validate" . }}
-{{- if .Values.oidc.enabled }}
-{{- /* The proxy port is the thing you expose. ClusterIP is the anchor: an
+{{- if or .Values.oidc.enabled (and (not .Values.oidc.enabled) (not .Values.controlPlane.launchToken)) }}
+{{- /* The sign-in listener is the thing you expose. ClusterIP is the anchor: an
 Ingress, a Gateway API route, or a LoadBalancer Service of your own can point
 at it — or set service.type to expose this one directly. */}}
 apiVersion: v1
@@ -21,5 +21,5 @@ spec:
   ports:
     - name: http
       port: {{ .Values.service.port }}
-      targetPort: 4180
+      targetPort: {{ if .Values.oidc.enabled }}4180{{ else }}3000{{ end }}
 {{- end }}

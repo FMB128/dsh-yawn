@@ -411,14 +411,27 @@ models' training data, so without the skill a session commits screenshots to a
 side branch and links them. It needs gh 2.99.0 or later, which the runner image
 provides.
 
-One module is not part of the bundle patch:
-`@zhming0/dsh-yawn/launch-token`. Mounted as a row, it serves
-`GET /launch-token`, which redirects the browser to dsh's tokenized login URL so
-users behind an authenticating proxy never read the token from the host log. It
-is not a sign-in: anyone who reaches dsh's port can use it, so the row is off by
-default. The control-plane image mounts it only when `DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1`,
-which the Kubernetes oauth2-proxy manifest sets. To mount it yourself, insert
-the row in a patch layer:
+Two authentication modules are not part of the bundle patch.
+
+`@zhming0/dsh-yawn/passcode-auth` is the product's sign-in. Mounted as a row, it
+serves `/login` and `/logout`, and wraps `ctx.connection.authorizeIndex`: a
+browser without dsh's cookie is sent to `/login`; a correct passcode makes the
+row call dsh's own `authenticatedUrl()` and `authorizeIndex()` on the server, so
+the launch token never reaches the browser and dsh still mints the cookie. It
+uses only dsh's public connection surface — no cookie signing, no private
+fields — and refuses `?token=` on the index while mounted. The passcode comes
+from `DSH_YAWN_PASSCODE`; the image mounts the row only when that variable is
+set, and the entrypoint rejects it alongside the launch-token route. The dsh
+seam this rides on (a root token request through `authorizeIndex` mints a cookie
+`admit` accepts) is pinned by `tests/passcode-auth-dsh.test.ts`.
+
+`@zhming0/dsh-yawn/launch-token` is break-glass only. Mounted as a row, it
+serves `GET /launch-token`, which redirects the browser to dsh's tokenized login
+URL. It is not a sign-in: anyone who reaches dsh's port can use it. The
+control-plane image mounts it only when `DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1`;
+the Helm chart uses it for the oauth2-proxy path until the OIDC handoff lands,
+and otherwise only when `controlPlane.launchToken` is explicitly set. To mount
+it yourself, insert the row in a patch layer:
 
 ```yaml
 - insert:
