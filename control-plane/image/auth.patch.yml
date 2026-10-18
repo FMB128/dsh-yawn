@@ -1,0 +1,12 @@
+# Applied as a --patch overlay by dsh-yawn-entrypoint when the
+# DSH_YAWN_OIDC_* names configure a provider. It mounts built-in sign-in:
+# /dsh-yawn/auth/login, /callback, /logout, and /health, plus the wrappers that
+# admit the browser and its API/WebSocket traffic from the signed session
+# cookie instead of dsh's launch token.
+#
+# The row does nothing when no provider is configured, but the entrypoint only
+# mounts it when DSH_YAWN_OIDC_ISSUER is set, so a port-forward install keeps
+# dsh's own token exchange and the optional /launch-token row.
+- insert:
+    - id: sandbox-auth
+      name: '@zhming0/dsh-yawn/auth'

@@ -6,10 +6,11 @@ import type {} from "@deepseek-ai/dsh-host-webserver";
 
 /**
  * Hands out dsh's launch token for deployments where something else already
- * authenticates users, such as the oauth2-proxy sidecar in the Kubernetes
- * distribution. dsh's own browser login is the `?token=` URL it prints at
- * startup; `GET /launch-token` answers with a redirect to that URL so nobody
- * has to read the token from the host log.
+ * authenticates users, such as a reverse proxy in front of a port-forward
+ * install. dsh's own browser login is the `?token=` URL it prints at startup;
+ * `GET /launch-token` answers with a redirect to that URL so nobody has to read
+ * the token from the host log. The control plane's built-in OIDC sign-in does
+ * not use this row.
  *
  * This is not a sign-in: it bypasses dsh's one check. Anyone who can reach
  * dsh's port can use it, so the row is only mounted where reaching the port

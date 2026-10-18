@@ -1,9 +1,10 @@
 # Applied as a --patch overlay by dsh-yawn-entrypoint when
-# DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1. It mounts GET /launch-token, which redirects
-# the browser to dsh's tokenized login URL, so a deployment that authenticates
-# users in front of dsh (the chart's `oidc.enabled`) never has to read the token
-# from the control plane log. The route bypasses dsh's only browser check for anyone who can
-# reach dsh's port, so leave it off unless the port sits behind such a front.
+# DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1 and no identity provider is
+# configured. It mounts GET /launch-token, which redirects the browser to dsh's
+# tokenized login URL, so a port-forward user never has to read the token from
+# the control plane log. The route bypasses dsh's only browser check for anyone
+# who can reach dsh's port, so leave it off unless the port is loopback-only or
+# sits behind an authenticating front. Built-in OIDC sign-in does not use it.
 - insert:
     - id: sandbox-launch-token
       name: '@zhming0/dsh-yawn/launch-token'

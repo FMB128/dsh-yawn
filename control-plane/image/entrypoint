@@ -41,10 +41,14 @@ if [ "${DSH_YAWN_BIND_ALL:-0}" = 1 ]; then
   fi
   set -- --host "$address" "$@"
 fi
-# DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1 mounts GET /launch-token (see
-# launch-token.patch.yml). The overlay is a launcher flag, so it goes before
-# the web app's arguments.
-if [ "${DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE:-0}" = 1 ]; then
+# A configured identity provider mounts built-in sign-in (see auth.patch.yml);
+# it replaces dsh's launch-token exchange for the browser, so the optional
+# /launch-token route is not mounted beside it. Without a provider,
+# DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1 keeps the port-forward shortcut.
+# The overlays are launcher flags, so they go before the web app's arguments.
+if [ -n "${DSH_YAWN_OIDC_ISSUER:-}" ]; then
+  set -- --patch /opt/dsh-yawn/auth.patch.yml "$@"
+elif [ "${DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE:-0}" = 1 ]; then
   set -- --patch /opt/dsh-yawn/launch-token.patch.yml "$@"
 fi
 exec dsh --profile web "$@"
