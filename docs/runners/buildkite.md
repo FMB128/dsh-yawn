@@ -129,7 +129,7 @@ controlPlane:
           key: token
 ```
 
-Add these values to the file you installed with; keep its `auth.*` or `oidc.*`
+Add these values to the file you installed with; keep its `auth.*`
 sign-in values, or the chart refuses to render.
 
 Then run `helm upgrade` with the values file. The pod reads its environment at

@@ -44,8 +44,8 @@ in a sandbox of its own. Hence the name: you can lay back and yawn :)
 - Sandbox backends: Docker, Kubernetes
   [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) with warm
   pools, and Buildkite.
-- Sign-in with a built-in passcode, or through oauth2-proxy and your OIDC
-  identity provider in the Helm chart.
+- Sign-in with a built-in passcode, or OIDC through the identity provider you
+  configure in the Helm chart.
 - Web UI pages for sandbox profiles and idle timers, secrets, AGENTS.md
   instructions, notifications, MCP servers, and plugins, applied without a
   restart.
@@ -60,8 +60,7 @@ in a sandbox of its own. Hence the name: you can lay back and yawn :)
 - Somewhere to run sandboxes: Docker on the same VM, a Kubernetes cluster with
   [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox), or a
   Buildkite organization.
-- Sign-in for the Web UI. The control plane serves a passcode login; the Helm
-  chart can use oauth2-proxy and your OIDC provider instead.
+- Sign-in for the Web UI: a passcode, or OIDC with your identity provider.
 - A model API key, added in the Web UI.
 - Optional: a `GITHUB_TOKEN` for private repositories and pushes.
 
@@ -104,6 +103,6 @@ To clean up: `docker rm -f dsh-yawn`. What each flag does is in the
 | [`docs/credentials.md`](docs/credentials.md)               | the secret store: `GITHUB_TOKEN`, the Web UI, control-plane credentials     |
 | [`docs/runners/kubernetes.md`](docs/runners/kubernetes.md) | sandboxes as Kubernetes pods: install, security model, what survives a wake |
 | [`docs/runners/buildkite.md`](docs/runners/buildkite.md)   | sandboxes as Buildkite builds: pipeline, idle checkpoints, limits           |
-| [`docs/faq.md`](docs/faq.md)                               | launch tokens, sandbox lifecycle, the runner tunnel, plugins                |
+| [`docs/faq.md`](docs/faq.md)                               | sign-in, sandbox lifecycle, the runner tunnel, plugins                     |
 | [`control-plane/README.md`](control-plane/README.md)       | what the bundle patch changes, every setting, secret handling               |
 | [`docs/development.md`](docs/development.md)               | repository layout, build and test, checkout installs, releasing             |

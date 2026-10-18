@@ -19,10 +19,6 @@ controlPlane:
   # Extra arguments passed to the dsh web app, e.g. --trusted-host for an
   # exposure this chart does not name.
   extraArgs: []
-  # Break-glass only: mount GET /launch-token, which hands dsh's process token
-  # to anyone who can reach port 3000. Off by default; use auth.passcode or
-  # oidc instead, and leave this false for an internet-facing install.
-  launchToken: false
   # Extra environment variables for the control-plane container, appended after
   # the fixed ones. This is how the control plane gets a credential it needs in
   # order to create sandboxes — the Buildkite API token, for example — from a
@@ -77,13 +73,13 @@ runner:
 # dsh-yawn-registration-token Secret the warm pool mounts, and hands it to
 # Docker and Buildkite sandboxes when it starts them.
 
-# Browser sign-in. Without an identity provider, set auth.passcode (or point
-# auth.existingSecret at a Secret holding it); the control plane then serves a
-# passcode form and mints dsh's own browser cookie after the passcode matches.
-# With oidc.enabled the oauth2-proxy sidecar is the sign-in instead, and
-# auth.passcode must stay empty. One of the two is required; the only way to
-# run without either is controlPlane.launchToken, which is break-glass only.
+# Browser sign-in. One mode is required; the launch-token route no longer
+# exists. Passcode is the self-contained option. OIDC runs the authorization
+# code flow in the control plane and accepts only the emails or domains named
+# here.
 auth:
+  # passcode | oidc
+  mode: passcode
   # At least 8 characters. Rendered into a Secret this release owns.
   passcode: ""
   # Use a Secret you already manage instead of auth.passcode.
@@ -91,39 +87,37 @@ auth:
   # Key in auth.existingSecret that holds the passcode.
   secretKey: passcode
   # Hostname users open, for an Ingress, Gateway, or LoadBalancer in front of
-  # the passcode listener. Handed to dsh as --trusted-host; optional for
-  # `kubectl port-forward`, which uses a loopback Host.
+  # the control plane. Handed to dsh as --trusted-host. Required for OIDC and
+  # for any non-ClusterIP Service; optional for `kubectl port-forward`, which
+  # uses a loopback Host.
   hostname: ""
+  oidc:
+    # Authorization server issuer URL, e.g. https://idp.example/realms/acme
+    issuer: ""
+    clientId: ""
+    # Optional for public PKCE clients.
+    clientSecret: ""
+    # Use a Secret you already manage instead of auth.oidc.clientSecret.
+    existingSecret: ""
+    clientSecretKey: clientSecret
+    # Exact redirect URL registered at the issuer. Defaults to
+    # https://<auth.hostname>/oidc/callback.
+    redirectUrl: ""
+    # At least one of these is required. Domains match the part after @
+    # exactly, not subdomains.
+    allowedEmails: []
+    allowedDomains: []
+    scope: openid email profile
+    # Default true: the issuer is trusted to assert the email address, even
+    # when it reports email_verified: false or omits the claim. Set false to
+    # require email_verified: true.
+    allowUnverifiedEmail: true
 
-# The oauth2-proxy sidecar. dsh binds pod loopback, so the proxy is the only
-# listener a Service can expose. Create the Secret it reads first (see
-# NOTES.txt); until it exists the pod never becomes Ready. The launch-token
-# shortcut stays mounted in this mode until OIDC sign-in hands the cookie off
-# directly; auth.passcode does not apply here.
-oidc:
-  enabled: false
-  # Required when enabled: a bare host, no scheme. Handed to dsh as
-  # --trusted-host and used in the proxy's redirect URL.
-  hostname: ""
-  image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.4
-  existingSecret: dsh-yawn-oidc
-  # Accept any email the issuer authenticates. Restrict this to your domain,
-  # or use authenticated-emails-file, before trusting the issuer's whole user
-  # base with your control plane.
-  emailDomains: "*"
-  # Extra environment variables for the proxy, appended after the fixed ones.
-  # For an identity provider that needs a non-default flag, for example:
-  #   - name: OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL
-  #     value: "true"
-  extraEnv: []
-
-# The Service in front of the sign-in listener: the oauth2-proxy when
-# oidc.enabled, the control plane's own listener when auth.passcode is used.
-# ClusterIP is the anchor other controllers point at: an Ingress, a Gateway
-# API route, or a Service of your own selecting on the pod labels. Set type
-# LoadBalancer to expose it directly. Whatever fronts dsh must serve https and
-# pass WebSockets and large RPC bodies — see docs/control-plane.md for an
-# nginx-ingress example. Not rendered for controlPlane.launchToken.
+# The Service in front of the control plane's sign-in listener. ClusterIP is
+# the anchor other controllers point at: an Ingress, a Gateway API route, or a
+# Service of your own selecting on the pod labels. Set type LoadBalancer to
+# expose it directly. Whatever fronts dsh must serve https and pass WebSockets
+# and large RPC bodies — see docs/control-plane.md for an nginx-ingress example.
 service:
   type: ClusterIP
   port: 80

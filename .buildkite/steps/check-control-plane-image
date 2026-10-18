@@ -5,7 +5,7 @@ echo "--- :docker: Building the control-plane image"
 docker buildx bake control-plane-dev --load
 
 cleanup() {
-  docker rm -f dsh-yawn-check-loopback dsh-yawn-check-bind dsh-yawn-check-passcode >/dev/null 2>&1 || true
+  docker rm -f dsh-yawn-check-loopback dsh-yawn-check-bind dsh-yawn-check-passcode dsh-yawn-check-oidc >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -36,7 +36,7 @@ wait_for_listener() {
 # install relies on that default, and the single-machine demo's published port
 # needs the flag. Both runs must also come up as uid 1000, never root.
 echo "+++ :mag: Checking the loopback default"
-docker run -d --name dsh-yawn-check-loopback dsh-yawn-control-plane:dev
+docker run -d --name dsh-yawn-check-loopback -e DSH_YAWN_PASSCODE=correct-horse-battery dsh-yawn-control-plane:dev
 wait_for_listener dsh-yawn-check-loopback
 docker exec dsh-yawn-check-loopback grep -q '^Uid:[[:space:]]*1000' /proc/1/status
 docker exec dsh-yawn-check-loopback grep -q '0100007F:0BB8' /proc/net/tcp
@@ -45,7 +45,7 @@ echo "loopback bind, uid 1000"
 # dsh refuses wildcard binds, so the flag binds the container's own address,
 # which /proc/net/tcp lists as little-endian hex.
 echo "+++ :mag: Checking DSH_YAWN_BIND_ALL"
-docker run -d --name dsh-yawn-check-bind -e DSH_YAWN_BIND_ALL=1 dsh-yawn-control-plane:dev
+docker run -d --name dsh-yawn-check-bind -e DSH_YAWN_BIND_ALL=1 -e DSH_YAWN_PASSCODE=correct-horse-battery dsh-yawn-control-plane:dev
 wait_for_listener dsh-yawn-check-bind
 address=$(docker exec dsh-yawn-check-bind sh -c "hostname -i | awk '{print \$1}'")
 IFS=. read -r a b c d <<<"$address"
@@ -67,12 +67,29 @@ if docker run --rm -e DSH_YAWN_PASSCODE=short dsh-yawn-control-plane:dev >/dev/n
   echo "a short passcode started the control plane" >&2
   exit 1
 fi
-if docker run --rm -e DSH_YAWN_PASSCODE=correct-horse-battery \
-  -e DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1 dsh-yawn-control-plane:dev >/dev/null 2>&1; then
-  echo "the passcode and launch-token routes were both accepted" >&2
+if docker run --rm dsh-yawn-control-plane:dev >/dev/null 2>&1; then
+  echo "a control plane with no sign-in mode started" >&2
   exit 1
 fi
-echo "passcode login serves, short passcode and mixed routes refuse to start"
+if docker run --rm -e DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1 dsh-yawn-control-plane:dev >/dev/null 2>&1; then
+  echo "the removed launch-token route was accepted" >&2
+  exit 1
+fi
+echo "passcode login serves; short, missing, and removed modes refuse to start"
+
+# OIDC is a second row, not a proxy. A dead issuer still has to activate the row
+# and answer 503 rather than falling back to the launch-token URL.
+echo "+++ :mag: Checking the OIDC login"
+docker run -d --name dsh-yawn-check-oidc \
+  -e DSH_YAWN_OIDC_ISSUER=https://127.0.0.1:1 \
+  -e DSH_YAWN_OIDC_CLIENT_ID=client \
+  -e DSH_YAWN_OIDC_REDIRECT_URL=https://dsh.example/oidc/callback \
+  -e DSH_YAWN_OIDC_ALLOWED_EMAILS=alice@example.com \
+  dsh-yawn-control-plane:dev >/dev/null
+wait_for_listener dsh-yawn-check-oidc
+docker exec dsh-yawn-check-oidc node -e \
+  "fetch('http://127.0.0.1:3000/login', { redirect: 'manual' }).then((r) => process.exit(r.status === 503 ? 0 : 1), () => process.exit(1))"
+echo "OIDC row activates and fails closed when the issuer is unreachable"
 
 # The entrypoint's other job is joining the mounted socket's group before it
 # drops root. A socket owned by a known group stands in for the Docker one, and
@@ -81,7 +98,7 @@ echo "+++ :mag: Checking the socket group join"
 status=$(docker run --rm --entrypoint sh dsh-yawn-control-plane:dev -ec '
   node -e "require(\"net\").createServer().listen(\"/var/run/docker.sock\", () => { require(\"fs\").chownSync(\"/var/run/docker.sock\", 0, 12345); require(\"fs\").chmodSync(\"/var/run/docker.sock\", 0o660); })" &
   for _ in $(seq 1 30); do [ -S /var/run/docker.sock ] && break; sleep 0.2; done
-  dsh-yawn-entrypoint --no-open &
+  DSH_YAWN_PASSCODE=correct-horse-battery dsh-yawn-entrypoint --no-open &
   server=$!
   for _ in $(seq 1 30); do
     grep -q "^Groups:.*12345" /proc/$server/status 2>/dev/null && break

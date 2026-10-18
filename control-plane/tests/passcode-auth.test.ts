@@ -170,6 +170,17 @@ describe("passcode auth", () => {
     expect(out.headers.location).toBe(LOGIN_PATH);
   });
 
+  it("answers /healthz without authentication", async () => {
+    mounted = await mount();
+    const out = await dispatch(
+      mounted.routes,
+      "/healthz",
+      request({ url: "/healthz" }),
+    );
+    expect(out.status).toBe(200);
+    expect(out.body).toBe("ok\n");
+  });
+
   it("refuses a launch-token index URL", async () => {
     mounted = await mount();
     const out = reply();

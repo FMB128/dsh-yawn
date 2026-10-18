@@ -26,9 +26,8 @@ permissions it needs to manage sandboxes.
 - `helm` 3.8 or later.
 - A default StorageClass, or a storage class name for the control plane's data
   volume.
-- A sign-in method: the built-in passcode login (`auth.passcode`), or an OIDC
-  identity provider plus the oauth2-proxy sidecar. `controlPlane.launchToken`
-  is break-glass and not a sign-in.
+- A sign-in method: the built-in passcode login (`auth.mode=passcode`), or an
+  OIDC identity provider (`auth.mode=oidc`).
 
 ### Install
 
@@ -53,24 +52,24 @@ service:
 `--trusted-host`. For an Ingress or a Gateway API route, point it at the
 Service and use the same name.
 
-For OIDC instead, create the proxy's Secret first. Secret values do not belong
-in values files, so the chart deliberately never sees them:
-
-```sh
-kubectl create namespace dsh-yawn
-kubectl -n dsh-yawn create secret generic dsh-yawn-oidc \
-  --from-literal=OAUTH2_PROXY_OIDC_ISSUER_URL=https://your-idp/realm \
-  --from-literal=OAUTH2_PROXY_CLIENT_ID=dsh-yawn-control-plane \
-  --from-literal=OAUTH2_PROXY_CLIENT_SECRET=… \
-  --from-literal=OAUTH2_PROXY_COOKIE_SECRET="$(openssl rand -base64 32 | tr -- '+/' '-_')"
-```
+For OIDC instead, set the issuer, client, allowed accounts, and public
+hostname. The redirect URL defaults to
+`https://<auth.hostname>/oidc/callback`; register it at the issuer, or set
+`auth.oidc.redirectUrl` explicitly:
 
 ```yaml
 # dsh-yawn.values.yaml
-oidc:
-  enabled: true
+auth:
+  mode: oidc
   hostname: dsh.example.com
-  emailDomains: your-company.com
+  oidc:
+    issuer: https://idp.example/realms/acme
+    clientId: dsh-yawn-control-plane
+    clientSecret: …
+    allowedDomains: [your-company.com]
+    # Default true: accept email_verified: false or a missing claim.
+    # Set false to require email_verified: true.
+    allowUnverifiedEmail: true
 service:
   type: LoadBalancer
 ```
@@ -121,7 +120,7 @@ spec:
                 port:
                   name: http
           # Only for runners outside the cluster, such as Buildkite agents.
-          # It skips oauth2-proxy: the registration token protects the tunnel.
+          # It skips sign-in: the registration token protects the tunnel.
           - path: /tunnel
             pathType: Exact
             backend:
@@ -134,14 +133,14 @@ spec:
       secretName: dsh-yawn-tls
 ```
 
-The host must match `oidc.hostname` or `auth.hostname`. The chart passes it to
-dsh as `--trusted-host`, because dsh rejects `/api` requests whose `Host`
-header is neither loopback nor trusted.
+The host must match `auth.hostname`. The chart passes it to dsh as
+`--trusted-host`, because dsh rejects `/api` requests whose `Host` header is
+neither loopback nor trusted.
 
 With the passcode login, users open `https://dsh.example.com/` and enter the
-passcode. With OIDC, they land signed in through `/launch-token`; everyone the
-identity provider admits shares the same sessions, secrets, and sandboxes, so
-set `oidc.emailDomains` accordingly.
+passcode. With OIDC, the same URL redirects to the issuer and back. Everyone
+you allow shares the same sessions, secrets, and sandboxes, so keep
+`auth.oidc.allowedEmails` or `auth.oidc.allowedDomains` narrow.
 
 To use only `kubectl port-forward`, keep `service.type: ClusterIP`, then:
 
@@ -150,13 +149,10 @@ kubectl -n dsh-yawn port-forward deploy/dsh-yawn-control-plane 3000:3000
 # open http://localhost:3000/ and enter the passcode
 ```
 
-OIDC needs the hostname you configured: its callback URL is
-`https://<oidc.hostname>/oauth2/callback`, so a bare port-forward does not
-match it.
-
-`controlPlane.launchToken: true` is the break-glass fallback: it mounts
-`/launch-token` and exposes dsh's process token to anyone who reaches port
-3000. It cannot be combined with `auth.passcode` or `oidc.enabled`.
+OIDC needs the hostname you configured: its redirect URL is
+`https://<auth.hostname>/oidc/callback`, so a bare port-forward does not match
+it. Point an Ingress or Gateway at the Service instead, or set a matching
+`auth.oidc.redirectUrl` for a local forward.
 
 ### Verify
 
@@ -164,15 +160,21 @@ match it.
 kubectl -n dsh-yawn rollout status deployment/dsh-yawn-control-plane --timeout=300s
 ```
 
-The pod becomes Ready when dsh is serving. Open the address you exposed; the
-passcode login appears at `/login`, or OIDC lands you through `/launch-token`.
-You can then create a session, add secrets, and add a repository workspace. The
-first tool call fails until a runner is installed, which is expected.
+The pod becomes Ready when dsh is serving; the probe uses `/healthz` and does
+not depend on the identity provider. Open the address you exposed; the
+passcode form or the OIDC redirect appears at `/login`. You can then create a
+session, add secrets, and add a repository workspace. The first tool call fails
+until a runner is installed, which is expected.
 
 ### Upgrade
 
 `helm upgrade` moves the control plane. It does not change runners; re-apply
 their manifests at the matching version to move their image.
+
+The old `oidc.enabled`/`oidc.*` values and `controlPlane.launchToken` were
+removed. The chart fails if either is still present rather than silently
+changing the sign-in mode. Move OIDC settings under `auth.oidc` and set
+`auth.mode: oidc`.
 
 The data volume carries the dsh profile across the upgrade. On the first boot
 of a new image, the image's seed refreshes the control plane's own package and
@@ -184,8 +186,8 @@ UI. If that refresh fails, the seed logs a warning, keeps the previous
 
 The same control-plane image runs as one Docker container on any machine you
 keep on. Sandboxes then run as sibling containers on that machine's Docker, or
-on Buildkite. The image serves the same passcode login; bring an HTTPS proxy
-for the network path, not an authentication layer.
+on Buildkite. The image serves the same passcode or OIDC sign-in; bring an
+HTTPS proxy for the network path, not an authentication layer.
 
 ### Run the container
 
@@ -226,14 +228,14 @@ with `--network host`, so it can reach loopback. It must:
 - pass WebSockets, keep connections open for hours, and accept request bodies
   of a few hundred megabytes.
 
-Users then open `https://dsh.example.com/` and enter the passcode. The
-distribution has no separate OIDC handoff on this path yet; if you already run
-an identity-aware proxy, you can put it in front of the passcode login for a
-second factor.
+Users then open `https://dsh.example.com/` and enter the passcode.
 
-`DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1` is the break-glass fallback. It
-serves `/launch-token`, which hands dsh's process token to anyone who can reach
-port 3000; do not use it on an internet-facing install.
+For OIDC on this path, set the same `DSH_YAWN_OIDC_*` variables the chart sets
+(`ISSUER`, `CLIENT_ID`, `REDIRECT_URL`, `ALLOWED_EMAILS` or
+`ALLOWED_DOMAINS`, and optionally `CLIENT_SECRET`, `SCOPE`, and
+`ALLOW_UNVERIFIED_EMAIL`). `ALLOW_UNVERIFIED_EMAIL` defaults to true; set it to
+`false` to require `email_verified: true`. The redirect URL must be the public
+`https://dsh.example.com/oidc/callback`.
 
 For runners outside this machine, such as Buildkite agents, also route the
 exact path `/tunnel` to port 8081 and leave authentication off that path: the

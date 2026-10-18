@@ -31,49 +31,48 @@ runner setup pages below show the profile to add.
 
 {{- end }}
 
-{{- if .Values.oidc.enabled }}
+{{- if eq .Values.auth.mode "oidc" }}
 
-The oauth2-proxy reads its configuration from the Secret
-"{{ .Values.oidc.existingSecret }}" in {{ .Release.Namespace }}. If it does not
-exist yet, create it — until then the pod runs but never becomes Ready:
+The control plane signs users in with OIDC. Open
 
-  kubectl -n {{ .Release.Namespace }} create secret generic {{ .Values.oidc.existingSecret }} \
-    --from-literal=OAUTH2_PROXY_OIDC_ISSUER_URL=https://your-idp/realm \
-    --from-literal=OAUTH2_PROXY_CLIENT_ID=dsh-yawn-control-plane \
-    --from-literal=OAUTH2_PROXY_CLIENT_SECRET=… \
-    --from-literal=OAUTH2_PROXY_COOKIE_SECRET="$(openssl rand -base64 32 | tr -- '+/' '-_')"
+  https://{{ .Values.auth.hostname }}/
 
-{{- if eq .Values.service.type "LoadBalancer" }}
-Once the Secret exists and the load balancer's address resolves for
-{{ .Values.oidc.hostname }}, open
+and it redirects to {{ .Values.auth.oidc.issuer }}. Register this exact redirect
+URL at the issuer:
 
-  https://{{ .Values.oidc.hostname }}/launch-token
+  {{ include "dsh-yawn.oidcRedirectUrl" . }}
 
-and you land signed in.
-{{- else }}
-The proxy is running at Service/{{ include "dsh-yawn.fullname" . }}
-(port {{ .Values.service.port }}) but not exposed. Point an Ingress, a Gateway
-API route, or a LoadBalancer Service of your own at it — the pod labels
-(app.kubernetes.io/name, app.kubernetes.io/instance) are a stable target —
-then open https://{{ .Values.oidc.hostname }}/launch-token. Whatever fronts
-dsh must serve https (the proxy's cookie is secure) and pass WebSockets and
-large RPC bodies; docs/control-plane.md has an nginx-ingress
-example.
+Only these accounts may enter:
+
+{{- with .Values.auth.oidc.allowedEmails }}
+  emails: {{ join ", " . }}
+{{- end }}
+{{- with .Values.auth.oidc.allowedDomains }}
+  domains: {{ join ", " . }}
 {{- end }}
 
-{{- else if .Values.controlPlane.launchToken }}
-
-Break-glass mode is on: the control plane serves `/launch-token`, which hands
-dsh's process token to anyone who can reach port 3000. Reach it over a
-port-forward only:
-
-  kubectl -n {{ .Release.Namespace }} port-forward deploy/{{ include "dsh-yawn.fullname" . }} 3000:3000
-
-Then open http://localhost:3000/launch-token.
+{{- if eq .Values.service.type "ClusterIP" }}
+Service/{{ include "dsh-yawn.fullname" . }} (port {{ .Values.service.port }}) is
+ClusterIP. Point an Ingress, a Gateway API route, or a LoadBalancer Service of
+your own at it — the pod labels (app.kubernetes.io/name,
+app.kubernetes.io/instance) are a stable target — and make
+{{ .Values.auth.hostname }} reach it over HTTPS.
+{{- else }}
+The Service is exposed; make {{ .Values.auth.hostname }} resolve to it over
+HTTPS.
+{{- end }}
 
 {{- else }}
 
 The control plane serves a passcode login at `/login`.
+
+{{- if and (eq .Values.service.type "ClusterIP") (not .Values.auth.hostname) }}
+
+WARNING: service.type is ClusterIP and auth.hostname is empty. That is fine for
+`kubectl port-forward`, but if an Ingress or Gateway fronts this Service, set
+auth.hostname to the public hostname. Without it, dsh rejects /login and /api
+with 403 because the public Host is not trusted.
+{{- end }}
 
 {{- if eq .Values.service.type "ClusterIP" }}
 

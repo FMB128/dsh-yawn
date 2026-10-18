@@ -13,7 +13,7 @@ render() {
   helm template dsh-yawn-control-plane "$CHART" --namespace dsh-yawn "$@"
 }
 
-echo "--- :helm: Rendering the default and proxy value sets"
+echo "--- :helm: Rendering the default and OIDC value sets"
 render --set auth.passcode=test-passcode >/tmp/chart-default.yaml
 grep -q "DSH_YAWN_PASSCODE" /tmp/chart-default.yaml \
   || { echo "default render lost the passcode login" >&2; exit 1; }
@@ -23,14 +23,24 @@ if grep -q "DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE" /tmp/chart-default.yaml; 
 fi
 grep -q "ws://dsh-yawn-control-plane-tunnel.dsh-yawn.svc.cluster.local:8081/tunnel" /tmp/chart-default.yaml \
   || { echo "dsh-yawn-runner-config lost the in-cluster tunnel address" >&2; exit 1; }
-render --set oidc.enabled=true --set oidc.hostname=dsh.example.com \
+render --set auth.mode=oidc --set auth.hostname=dsh.example.com \
+  --set auth.oidc.issuer=https://idp.example/realms/acme \
+  --set auth.oidc.clientId=dsh-yawn \
+  --set auth.oidc.allowedEmails[0]=alice@example.com \
+  --set auth.oidc.allowedDomains[0]=example.com \
   --set service.type=LoadBalancer --set service.annotations.foo=bar \
-  --set oidc.extraEnv[0].name=OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL \
-  --set oidc.extraEnv[0].value=true >/tmp/chart-proxy.yaml
-for expected in "type: LoadBalancer" "foo: bar" "OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL"; do
-  grep -q "$expected" /tmp/chart-proxy.yaml \
-    || { echo "proxy render lost: $expected" >&2; exit 1; }
+  >/tmp/chart-oidc.yaml
+for expected in "type: LoadBalancer" "foo: bar" "DSH_YAWN_OIDC_ISSUER" \
+  "DSH_YAWN_OIDC_CLIENT_ID" "https://dsh.example.com/oidc/callback" \
+  "DSH_YAWN_OIDC_ALLOWED_EMAILS" "DSH_YAWN_OIDC_ALLOWED_DOMAINS" \
+  "DSH_YAWN_OIDC_ALLOW_UNVERIFIED_EMAIL" "path: /healthz"; do
+  grep -q "$expected" /tmp/chart-oidc.yaml \
+    || { echo "OIDC render lost: $expected" >&2; exit 1; }
 done
+if grep -q "DSH_YAWN_PASSCODE" /tmp/chart-oidc.yaml; then
+  echo "OIDC render also mounted the passcode login" >&2
+  exit 1
+fi
 # controlPlane.extraEnv is how a boot-time credential (the Buildkite API token)
 # reaches the process from a Secret, so the block has to render where dsh
 # reads it.
@@ -92,9 +102,20 @@ expect_fail "a startup setting under sandboxManager" \
   --set auth.passcode=test-passcode \
   --set controlPlane.sandboxManager.profiles.standard.backend=kas \
   --set controlPlane.sandboxManager.workspace=/tmp/elsewhere
-expect_fail "oidc without hostname" --set oidc.enabled=true
-expect_fail "LoadBalancer without a sign-in listener" \
-  --set service.type=LoadBalancer
+expect_fail "OIDC without hostname" \
+  --set auth.mode=oidc --set auth.oidc.issuer=https://idp.example \
+  --set auth.oidc.clientId=client --set auth.oidc.allowedDomains[0]=example.com
+expect_fail "OIDC without an allowlist" \
+  --set auth.mode=oidc --set auth.hostname=dsh.example.com \
+  --set auth.oidc.issuer=https://idp.example --set auth.oidc.clientId=client
+expect_fail "LoadBalancer without a hostname" \
+  --set auth.passcode=test-passcode --set service.type=LoadBalancer
+expect_fail "the removed oidc block" --set oidc.enabled=true
+expect_fail "the removed launch-token field" --set controlPlane.launchToken=true
+expect_fail "a hostname with a scheme" \
+  --set auth.passcode=test-passcode --set auth.hostname=https://dsh.example.com
+expect_fail "auth.oidc under passcode mode" \
+  --set auth.passcode=test-passcode --set auth.oidc.issuer=https://idp.example
 
 echo "--- :kubernetes: Rendering the sandbox pool"
 kubectl kustomize deploy/kubernetes/runner >/tmp/kustomize-runner.yaml

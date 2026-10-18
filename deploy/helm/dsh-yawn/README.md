@@ -19,8 +19,8 @@ runner is installed.
 
 ## Prerequisites
 
-- A Kubernetes cluster and a sign-in method: the built-in passcode login, or an
-  OIDC identity provider for the oauth2-proxy sidecar.
+- A Kubernetes cluster and a sign-in method: `auth.mode=passcode` (the
+  self-contained option) or `auth.mode=oidc` with an identity provider.
 - A default StorageClass for the control plane data volume, or
   `controlPlane.persistence.storageClass`.
 
@@ -45,10 +45,22 @@ With OIDC instead:
 ```sh
 helm install dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
   --namespace dsh-yawn --create-namespace \
-  --set oidc.enabled=true \
-  --set oidc.hostname=dsh.example.com \
+  --set auth.mode=oidc \
+  --set auth.hostname=dsh.example.com \
+  --set auth.oidc.issuer=https://idp.example/realms/acme \
+  --set auth.oidc.clientId=dsh-yawn \
+  --set auth.oidc.clientSecret='…' \
+  --set auth.oidc.allowedDomains[0]=example.com \
   --set service.type=LoadBalancer
 ```
+
+Register `https://dsh.example.com/oidc/callback` as the redirect URL at the
+issuer, or set `auth.oidc.redirectUrl` explicitly. Use
+`auth.oidc.existingSecret` for a client secret you rotate outside Helm.
+`auth.oidc.allowedEmails` or `auth.oidc.allowedDomains` is required; the
+control plane is one owner, so it does not accept every account the issuer
+knows. `auth.oidc.allowUnverifiedEmail` defaults to `true`; set it to `false`
+to require `email_verified: true`.
 
 The release must be named `dsh-yawn-control-plane` and live in one namespace
 per control plane. Kubernetes runner manifests read the fixed names
@@ -56,11 +68,16 @@ per control plane. Kubernetes runner manifests read the fixed names
 `dsh-yawn-registration-token`. This release owns the first two; the control
 plane creates and owns the Secret.
 
-For OIDC, create the proxy's Secret first — the release notes print the command.
-Until it exists the pod runs but never becomes Ready. Without `oidc.enabled`,
-the control plane serves the passcode login; `kubectl port-forward` works when
-`service.type` stays `ClusterIP`. `controlPlane.launchToken` is the break-glass
-fallback, not a sign-in.
+The launch-token route no longer exists. With `service.type: ClusterIP`, use
+`kubectl port-forward` for the passcode login; OIDC needs the public hostname
+that matches its redirect URL.
+
+## Upgrade from the old chart values
+
+The old `oidc.enabled`/`oidc.*` block and `controlPlane.launchToken` are gone.
+The chart now fails on either one instead of silently rendering a different
+sign-in mode. Remove them, then put OIDC settings under `auth.oidc` and set
+`auth.mode: oidc`; `auth.mode` defaults to `passcode`.
 
 ## Values
 
@@ -69,7 +86,6 @@ fallback, not a sign-in.
 | `controlPlane.image.repository`                          | `ghcr.io/zhming0/dsh-yawn-control-plane`    | Control-plane image                                                                                                                            |
 | `controlPlane.image.tag`                                 | `.Chart.appVersion`                         | Released tag                                                                                                                                   |
 | `controlPlane.resources`                                 | `250m/512Mi → 2Gi`                          | Container resource requests and limits                                                                                                         |
-| `controlPlane.launchToken`                               | `false`                                     | Break-glass: mount `/launch-token` and hand dsh's process token to anyone who reaches port 3000; cannot be combined with `auth` or `oidc`        |
 | `controlPlane.extraArgs`                                 | `[]`                                        | Extra `dsh web` arguments                                                                                                                      |
 | `controlPlane.extraEnv`                                  | `[]`                                        | Extra environment variables for credentials the control plane needs itself, such as `BUILDKITE_API_TOKEN` from a Secret; never sandbox secrets |
 | `controlPlane.podAnnotations` / `controlPlane.podLabels` | `{}`                                        | Extra pod metadata                                                                                                                             |
@@ -77,20 +93,24 @@ fallback, not a sign-in.
 | `controlPlane.persistence.size`                          | `5Gi`                                       | Data volume size                                                                                                                               |
 | `controlPlane.persistence.storageClass`                  | `""`                                        | Data volume StorageClass; required when the cluster has no default                                                                             |
 | `runner.controlPlaneUrl`                                 | Tunnel Service URL                          | Tunnel address written into `dsh-yawn-runner-config`; only change it for an unusual layout                                                     |
-| `oidc.enabled`                                           | `false`                                     | Add the oauth2-proxy sidecar and Service                                                                                                       |
-| `oidc.hostname`                                          | `""`                                        | Required when enabled: bare host, no scheme                                                                                                    |
-| `oidc.image`                                             | `quay.io/oauth2-proxy/oauth2-proxy:v7.15.4` | Proxy image                                                                                                                                    |
-| `oidc.existingSecret`                                    | `dsh-yawn-oidc`                             | Secret with the proxy's OIDC and cookie configuration                                                                                          |
-| `oidc.emailDomains`                                      | `*`                                         | `OAUTH2_PROXY_EMAIL_DOMAINS`; restrict before trusting an issuer's whole user base                                                             |
-| `oidc.extraEnv`                                          | `[]`                                        | Extra environment variables for the proxy                                                                                                      |
-| `service.type`                                           | `ClusterIP`                                 | Service exposure type                                                                                                                          |
-| `service.port`                                           | `80`                                        | Service port in front of the proxy's 4180                                                                                                      |
-| `service.annotations`                                    | `{}`                                        | Annotations for the Service                                                                                                                    |
-| `controlPlane.sandboxManager`                            | `{}`                                        | Default sandbox-manager settings; unset means no profile is seeded, so no sandbox can be provisioned                                           |
-| `auth.passcode`                                          | `""`                                        | Passcode for the built-in login, at least 8 characters; required unless `oidc.enabled` or `controlPlane.launchToken`                            |
+| `auth.mode`                                              | `passcode`                                  | `passcode` or `oidc`                                                                                                                           |
+| `auth.passcode`                                          | `""`                                        | Passcode for the built-in login, at least 8 characters; required for `auth.mode=passcode`                                                      |
 | `auth.existingSecret`                                    | `""`                                        | Secret holding the passcode instead of `auth.passcode`                                                                                         |
 | `auth.secretKey`                                         | `passcode`                                  | Key in `auth.existingSecret`                                                                                                                   |
-| `auth.hostname`                                          | `""`                                        | Hostname users open; handed to dsh as `--trusted-host`. Required when `service.type` exposes the passcode listener                              |
+| `auth.hostname`                                          | `""`                                        | Hostname users open; handed to dsh as `--trusted-host`. Required for OIDC and any non-ClusterIP Service                                          |
+| `auth.oidc.issuer`                                       | `""`                                        | Authorization server issuer URL                                                                                                                |
+| `auth.oidc.clientId`                                     | `""`                                        | Client identifier registered at the issuer                                                                                                     |
+| `auth.oidc.clientSecret`                                 | `""`                                        | Client secret; leave empty for a public PKCE client                                                                                            |
+| `auth.oidc.existingSecret`                               | `""`                                        | Secret holding the client secret instead                                                                                                       |
+| `auth.oidc.clientSecretKey`                              | `clientSecret`                              | Key in `auth.oidc.existingSecret`                                                                                                              |
+| `auth.oidc.redirectUrl`                                  | `https://<auth.hostname>/oidc/callback`     | Exact redirect URL registered at the issuer                                                                                                    |
+| `auth.oidc.allowedEmails` / `auth.oidc.allowedDomains`   | `[]`                                        | At least one is required for OIDC; domains match after `@` exactly                                                                             |
+| `auth.oidc.scope`                                        | `openid email profile`                      | OIDC scope                                                                                                                                     |
+| `auth.oidc.allowUnverifiedEmail`                         | `true`                                      | Accept `email_verified: false` or a missing claim; set `false` to require `true`                                                               |
+| `service.type`                                           | `ClusterIP`                                 | Service exposure type                                                                                                                          |
+| `service.port`                                           | `80`                                        | Service port in front of the control plane's 3000                                                                                              |
+| `service.annotations`                                    | `{}`                                        | Annotations for the Service                                                                                                                    |
+| `controlPlane.sandboxManager`                            | `{}`                                        | Default sandbox-manager settings; unset means no profile is seeded, so no sandbox can be provisioned                                           |
 
 ## Sandbox-manager settings as values
 
