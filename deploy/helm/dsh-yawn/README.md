@@ -55,7 +55,11 @@ helm install dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
 ```
 
 Register `https://dsh.example.com/oidc/callback` as the redirect URL at the
-issuer, or set `auth.oidc.redirectUrl` explicitly. Use
+issuer, or set `auth.oidc.redirectUrl` explicitly. The issuer may live on any
+site; when it is on a different site than `auth.hostname`, the callback briefly
+shows a "Signing in" page that reloads the same URL from this origin, because
+the identity provider's redirect is a cross-site navigation that dsh's request
+fence refuses. Use
 `auth.oidc.existingSecret` for a client secret you rotate outside Helm.
 `auth.oidc.allowedEmails` or `auth.oidc.allowedDomains` is required; the
 control plane is one owner, so it does not accept every account the issuer

@@ -55,7 +55,11 @@ Service and use the same name.
 For OIDC instead, set the issuer, client, allowed accounts, and public
 hostname. The redirect URL defaults to
 `https://<auth.hostname>/oidc/callback`; register it at the issuer, or set
-`auth.oidc.redirectUrl` explicitly:
+`auth.oidc.redirectUrl` explicitly. The issuer may live on any site, including
+one on a different registrable domain than `auth.hostname`; when it does, the
+callback briefly shows a "Signing in" page that reloads the same URL from this
+origin, because the identity provider's redirect is a cross-site navigation
+that dsh's request fence refuses.
 
 ```yaml
 # dsh-yawn.values.yaml

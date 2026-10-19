@@ -435,7 +435,12 @@ sign-in row keeps dsh's plain Settings trigger.
 The passcode row reads `DSH_YAWN_PASSCODE`. The OIDC row reads
 `DSH_YAWN_OIDC_*`, runs the authorization code flow with PKCE, state, and a
 nonce in the control-plane process, and accepts only the configured emails or
-domains. Both rows also register `/healthz`, which reports the
+domains. An identity provider on another site returns the browser to the
+callback with a cross-site navigation, which dsh's fence refuses and whose
+redirect could not carry dsh's `SameSite=Strict` cookie anyway; the callback
+answers that navigation with a page that reloads the same path and query from
+this origin, and only the reloaded same-origin request runs the exchange. Both
+rows also register `/healthz`, which reports the
 row is mounted without contacting the identity provider. It replaces the former oauth2-proxy sidecar and `/launch-token`
 shortcut, both of which are gone. The image entrypoint mounts exactly one row
 and refuses to start without a sign-in mode.

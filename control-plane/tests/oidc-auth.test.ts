@@ -39,10 +39,12 @@ function request(
     url?: string;
     host?: string;
     cookie?: string;
+    headers?: Record<string, string>;
   } = {},
 ): IncomingMessage {
   const headers: Record<string, string> = {
     host: options.host ?? "dsh.example",
+    ...options.headers,
   };
   if (options.cookie !== undefined) {
     headers.cookie = options.cookie;
@@ -58,6 +60,7 @@ function request(
 function library(
   email = "alice@example.com",
   emailVerified: unknown = true,
+  onGrant?: () => void,
 ): OidcLibrary {
   return {
     randomPKCECodeVerifier: () => "verifier",
@@ -76,10 +79,12 @@ function library(
       }
       return url;
     },
-    authorizationCodeGrant: async () =>
-      ({
+    authorizationCodeGrant: async () => {
+      onGrant?.();
+      return {
         claims: () => ({ email, email_verified: emailVerified }),
-      }) as never,
+      } as never;
+    },
   } as unknown as OidcLibrary;
 }
 
@@ -143,7 +148,12 @@ async function mount(
       return url.href;
     },
     requestRejection(candidate: IncomingMessage): 401 | 403 | undefined {
-      if (candidate.headers.host === "evil.example") {
+      // Mirror dsh's fence (`isTrustedApiRequest`): the Host must be one we
+      // serve, and a cross-site browser marker is refused even when it is.
+      if (candidate.headers.host !== "dsh.example") {
+        return 403;
+      }
+      if (candidate.headers["sec-fetch-site"] === "cross-site") {
         return 403;
       }
       return candidate.headers.cookie === COOKIE ? undefined : 401;
@@ -387,6 +397,177 @@ describe("OIDC auth", () => {
       expect(out.status).toBe(303);
       expect(out.headers.location).toBe("/");
       expect(out.headers["set-cookie"]).toBe(COOKIE);
+    } finally {
+      await mounted.ctx.fiber.dispose();
+    }
+  });
+
+  it("bounces a cross-site callback on our own host back to the same URL", async () => {
+    let grants = 0;
+    const mounted = await mount({
+      library: library("alice@example.com", true, () => {
+        grants += 1;
+      }),
+    });
+    try {
+      await dispatch(mounted.routes, "/login", request({ url: "/login" }));
+      const url = "/oidc/callback?state=state&code=code";
+      const navigation = {
+        "sec-fetch-site": "cross-site",
+        "sec-fetch-mode": "navigate",
+      };
+      const out = await dispatch(
+        mounted.routes,
+        "/oidc/callback",
+        request({ url, headers: navigation }),
+      );
+      expect(out.status).toBe(200);
+      expect(out.headers["content-type"]).toContain("text/html");
+      expect(out.body).toContain(
+        'content="0;url=/oidc/callback?state=state&amp;code=code"',
+      );
+      expect(out.body).toContain(
+        'href="/oidc/callback?state=state&amp;code=code"',
+      );
+      expect(grants).toBe(0);
+
+      // The bounce did not consume the pending state: it bounces again.
+      const again = await dispatch(
+        mounted.routes,
+        "/oidc/callback",
+        request({ url, headers: navigation }),
+      );
+      expect(again.status).toBe(200);
+      expect(grants).toBe(0);
+    } finally {
+      await mounted.ctx.fiber.dispose();
+    }
+  });
+
+  it("completes the callback on a same-origin navigation", async () => {
+    let grants = 0;
+    const mounted = await mount({
+      library: library("alice@example.com", true, () => {
+        grants += 1;
+      }),
+    });
+    try {
+      await dispatch(mounted.routes, "/login", request({ url: "/login" }));
+      const out = await dispatch(
+        mounted.routes,
+        "/oidc/callback",
+        request({
+          url: "/oidc/callback?state=state&code=code",
+          headers: {
+            "sec-fetch-site": "same-origin",
+            "sec-fetch-mode": "navigate",
+          },
+        }),
+      );
+      expect(out.status).toBe(303);
+      expect(out.headers.location).toBe("/");
+      expect(out.headers["set-cookie"]).toBe(COOKIE);
+      expect(grants).toBe(1);
+    } finally {
+      await mounted.ctx.fiber.dispose();
+    }
+  });
+
+  it("refuses a cross-site callback for a foreign host", async () => {
+    let grants = 0;
+    const mounted = await mount({
+      library: library("alice@example.com", true, () => {
+        grants += 1;
+      }),
+    });
+    try {
+      await dispatch(mounted.routes, "/login", request({ url: "/login" }));
+      for (const host of ["evil.example", "other.example"]) {
+        const out = await dispatch(
+          mounted.routes,
+          "/oidc/callback",
+          request({
+            url: "/oidc/callback?state=state&code=code",
+            host,
+            headers: {
+              "sec-fetch-site": "cross-site",
+              "sec-fetch-mode": "navigate",
+            },
+          }),
+        );
+        expect(out.status).toBe(403);
+      }
+      expect(grants).toBe(0);
+    } finally {
+      await mounted.ctx.fiber.dispose();
+    }
+  });
+
+  it("refuses a cross-site callback that is not a navigation", async () => {
+    const mounted = await mount();
+    try {
+      await dispatch(mounted.routes, "/login", request({ url: "/login" }));
+      for (const mode of ["cors", undefined]) {
+        const headers: Record<string, string> = {
+          "sec-fetch-site": "cross-site",
+        };
+        if (mode !== undefined) {
+          headers["sec-fetch-mode"] = mode;
+        }
+        const out = await dispatch(
+          mounted.routes,
+          "/oidc/callback",
+          request({ url: "/oidc/callback?state=state&code=code", headers }),
+        );
+        expect(out.status).toBe(403);
+      }
+    } finally {
+      await mounted.ctx.fiber.dispose();
+    }
+  });
+
+  it("refuses a cross-site POST to the callback", async () => {
+    const mounted = await mount();
+    try {
+      await dispatch(mounted.routes, "/login", request({ url: "/login" }));
+      const out = await dispatch(
+        mounted.routes,
+        "/oidc/callback",
+        request({
+          method: "POST",
+          url: "/oidc/callback?state=state&code=code",
+          headers: {
+            "sec-fetch-site": "cross-site",
+            "sec-fetch-mode": "navigate",
+          },
+        }),
+      );
+      expect(out.status).toBe(403);
+    } finally {
+      await mounted.ctx.fiber.dispose();
+    }
+  });
+
+  it("escapes the URL on the bounce page", async () => {
+    const mounted = await mount();
+    try {
+      await dispatch(mounted.routes, "/login", request({ url: "/login" }));
+      const out = await dispatch(
+        mounted.routes,
+        "/oidc/callback",
+        request({
+          url: '/oidc/callback?state=state&code="><script>',
+          headers: {
+            "sec-fetch-site": "cross-site",
+            "sec-fetch-mode": "navigate",
+          },
+        }),
+      );
+      expect(out.status).toBe(200);
+      expect(out.body).not.toContain("<script>");
+      expect(out.body).toContain(
+        'content="0;url=/oidc/callback?state=state&amp;code=%22%3E%3Cscript%3E"',
+      );
     } finally {
       await mounted.ctx.fiber.dispose();
     }
