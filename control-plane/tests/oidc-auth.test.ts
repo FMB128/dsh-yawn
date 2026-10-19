@@ -444,51 +444,6 @@ describe("OIDC auth", () => {
     }
   });
 
-  it("bounces a cross-site navigation to the sign-in page", async () => {
-    const mounted = await mount();
-    try {
-      const navigation = {
-        "sec-fetch-site": "cross-site",
-        "sec-fetch-mode": "navigate",
-      };
-      const out = await dispatch(
-        mounted.routes,
-        "/login",
-        request({ url: "/login", headers: navigation }),
-      );
-      expect(out.status).toBe(200);
-      expect(out.body).toContain('content="0;url=/login"');
-      expect(out.body).toContain('href="/login"');
-
-      // A foreign Host is still refused by the fence.
-      const foreign = await dispatch(
-        mounted.routes,
-        "/login",
-        request({ url: "/login", host: "evil.example", headers: navigation }),
-      );
-      expect(foreign.status).toBe(403);
-
-      // The same-origin reload starts the flow as before.
-      const reload = await dispatch(
-        mounted.routes,
-        "/login",
-        request({
-          url: "/login",
-          headers: {
-            "sec-fetch-site": "same-origin",
-            "sec-fetch-mode": "navigate",
-          },
-        }),
-      );
-      expect(reload.status).toBe(303);
-      expect(new URL(reload.headers.location ?? "").origin).toBe(
-        "https://idp.example",
-      );
-    } finally {
-      await mounted.ctx.fiber.dispose();
-    }
-  });
-
   it("completes the callback on a same-origin navigation", async () => {
     let grants = 0;
     const mounted = await mount({

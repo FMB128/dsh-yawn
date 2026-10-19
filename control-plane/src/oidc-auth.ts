@@ -264,13 +264,12 @@ function escapeHtml(value: string): string {
 }
 
 /**
- * A cross-site top-level navigation cannot reach a sign-in route. dsh's fence
- * refuses it with 403, and its cookie is SameSite=Strict, so a 303 from the
- * callback could not carry the new cookie either. The identity provider's
- * redirect and a link from another site both arrive this way. Answer the
- * navigation with a page that asks for the same path and query from this site
- * instead: the second request is same-origin, so dsh's fence, the state check,
- * and the cookie all behave normally.
+ * The identity provider returns the browser to the callback with a cross-site
+ * navigation. dsh's fence refuses that with 403, and its cookie is
+ * SameSite=Strict, so a 303 from the callback could not carry the new cookie
+ * either. Answer this navigation with a page that asks for the same path and
+ * query from this site instead: the second request is same-origin, so dsh's
+ * fence, the state check, and the cookie all behave normally.
  *
  * Returns true once the response is written.
  */
@@ -278,7 +277,6 @@ function bounceToSameOrigin(
   request: IncomingMessage,
   response: ServerResponse,
   settings: OidcSettings,
-  pathname: string,
 ): boolean {
   if (request.method !== "GET") {
     return false;
@@ -299,7 +297,7 @@ function bounceToSameOrigin(
   } catch {
     return false;
   }
-  if (current.pathname !== pathname) {
+  if (current.pathname !== settings.redirectUrl.pathname) {
     return false;
   }
   // Same path and query, relative, so this page cannot become an open redirect.
@@ -369,14 +367,6 @@ export function apply(ctx: Context, config?: OidcAuthConfig): void {
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> {
-    // A link from another site reaches `/` first, and the index gate redirects
-    // it here; the bounce lets the sign-in page appear instead of a 403.
-    if (
-      settings !== undefined &&
-      bounceToSameOrigin(request, response, settings, LOGIN_PATH)
-    ) {
-      return;
-    }
     if (untrusted(connection, request, response)) {
       return;
     }
@@ -423,12 +413,7 @@ export function apply(ctx: Context, config?: OidcAuthConfig): void {
   ): Promise<void> {
     if (
       settings !== undefined &&
-      bounceToSameOrigin(
-        request,
-        response,
-        settings,
-        settings.redirectUrl.pathname,
-      )
+      bounceToSameOrigin(request, response, settings)
     ) {
       return;
     }
