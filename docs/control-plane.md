@@ -59,7 +59,8 @@ hostname. The redirect URL defaults to
 one on a different registrable domain than `auth.hostname`; when it does, the
 callback briefly shows a "Signing in" page that reloads the same URL from this
 origin, because the identity provider's redirect is a cross-site navigation
-that dsh's request fence refuses.
+that dsh's request fence refuses. A link from another site to `/login` shows
+the same page.
 
 ```yaml
 # dsh-yawn.values.yaml
