@@ -249,6 +249,36 @@ func TestEnvironmentForwardsNpmPrefix(t *testing.T) {
 	}
 }
 
+func TestEnvironmentEnablesNodeProxyWithSandboxProxy(t *testing.T) {
+	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NODE_USE_ENV_PROXY"} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("HTTPS_PROXY", "http://proxy.example:3128")
+	env := New("box").environment(nil)
+	if got := envValue(env, "NODE_USE_ENV_PROXY"); got != "1" {
+		t.Fatalf("NODE_USE_ENV_PROXY = %q, want 1", got)
+	}
+}
+
+func TestEnvironmentRespectsExplicitNodeProxy(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://proxy.example:3128")
+	t.Setenv("NODE_USE_ENV_PROXY", "0")
+	env := New("box").environment(nil)
+	if got := envValue(env, "NODE_USE_ENV_PROXY"); got != "0" {
+		t.Fatalf("NODE_USE_ENV_PROXY = %q, want the explicit 0", got)
+	}
+}
+
+func TestEnvironmentLeavesNodeProxyUnsetWithoutProxy(t *testing.T) {
+	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NODE_USE_ENV_PROXY"} {
+		t.Setenv(name, "")
+	}
+	env := New("box").environment(nil)
+	if got := envValue(env, "NODE_USE_ENV_PROXY"); got != "" {
+		t.Fatalf("NODE_USE_ENV_PROXY = %q, want unset", got)
+	}
+}
+
 func TestResolveMissingLeafThroughSymlink(t *testing.T) {
 	d := t.TempDir()
 	real := filepath.Join(d, "real")

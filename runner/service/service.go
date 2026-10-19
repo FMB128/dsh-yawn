@@ -131,11 +131,23 @@ func (s *Service) Health(_ context.Context, _ *connect.Request[v1.HealthRequest]
 func safeBase() map[string]string {
 	// DOCKER_HOST points the Docker CLI at the sandbox's own daemon sidecar,
 	// which the pod template sets; there is none on the Docker backend.
-	keep := []string{"PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "MISE_DATA_DIR", "MISE_CACHE_DIR", "NPM_CONFIG_PREFIX", "DOCKER_HOST", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"}
+	keep := []string{"PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "MISE_DATA_DIR", "MISE_CACHE_DIR", "NPM_CONFIG_PREFIX", "DOCKER_HOST", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy", "NODE_USE_ENV_PROXY"}
 	environment := map[string]string{"PATH": "/usr/local/bin:/usr/bin:/bin"}
 	for _, name := range keep {
 		if value, ok := os.LookupEnv(name); ok {
 			environment[name] = value
+		}
+	}
+	// Node's built-in fetch ignores HTTP(S)_PROXY unless NODE_USE_ENV_PROXY is
+	// set, so a setup hook that bootstraps a Node tool (corepack, npm, pnpm)
+	// would bypass the sandbox proxy even though mise and curl honor it. Supply
+	// the default only: an explicit value above, or a secret, still wins.
+	if environment["NODE_USE_ENV_PROXY"] == "" {
+		for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+			if environment[name] != "" {
+				environment["NODE_USE_ENV_PROXY"] = "1"
+				break
+			}
 		}
 	}
 	return environment
