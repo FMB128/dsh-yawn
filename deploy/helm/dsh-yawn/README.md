@@ -19,12 +19,28 @@ runner is installed.
 
 ## Prerequisites
 
-- A Kubernetes cluster and an OIDC identity provider, unless you reach the
-  control plane over `kubectl port-forward`.
+- A Kubernetes cluster and a sign-in method: the built-in passcode login, or an
+  OIDC identity provider for the oauth2-proxy sidecar.
 - A default StorageClass for the control plane data volume, or
   `controlPlane.persistence.storageClass`.
 
 ## Install
+
+With the built-in passcode login:
+
+```sh
+helm install dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
+  --namespace dsh-yawn --create-namespace \
+  --set auth.passcode='choose-a-long-passphrase' \
+  --set auth.hostname=dsh.example.com \
+  --set service.type=LoadBalancer
+```
+
+`auth.passcode` is stored in a Secret this release owns. For a passcode you
+rotate outside Helm, create a Secret and set `auth.existingSecret` and
+`auth.secretKey` instead.
+
+With OIDC instead:
 
 ```sh
 helm install dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
@@ -40,9 +56,11 @@ per control plane. Kubernetes runner manifests read the fixed names
 `dsh-yawn-registration-token`. This release owns the first two; the control
 plane creates and owns the Secret.
 
-Create the proxy's OIDC Secret first — the release notes print the command.
+For OIDC, create the proxy's Secret first — the release notes print the command.
 Until it exists the pod runs but never becomes Ready. Without `oidc.enabled`,
-reach the control plane over `kubectl port-forward` and open `/launch-token`.
+the control plane serves the passcode login; `kubectl port-forward` works when
+`service.type` stays `ClusterIP`. `controlPlane.launchToken` is the break-glass
+fallback, not a sign-in.
 
 ## Values
 
@@ -51,6 +69,7 @@ reach the control plane over `kubectl port-forward` and open `/launch-token`.
 | `controlPlane.image.repository`                          | `ghcr.io/zhming0/dsh-yawn-control-plane`    | Control-plane image                                                                                                                            |
 | `controlPlane.image.tag`                                 | `.Chart.appVersion`                         | Released tag                                                                                                                                   |
 | `controlPlane.resources`                                 | `250m/512Mi → 2Gi`                          | Container resource requests and limits                                                                                                         |
+| `controlPlane.launchToken`                               | `false`                                     | Break-glass: mount `/launch-token` and hand dsh's process token to anyone who reaches port 3000; cannot be combined with `auth` or `oidc`        |
 | `controlPlane.extraArgs`                                 | `[]`                                        | Extra `dsh web` arguments                                                                                                                      |
 | `controlPlane.extraEnv`                                  | `[]`                                        | Extra environment variables for credentials the control plane needs itself, such as `BUILDKITE_API_TOKEN` from a Secret; never sandbox secrets |
 | `controlPlane.podAnnotations` / `controlPlane.podLabels` | `{}`                                        | Extra pod metadata                                                                                                                             |
@@ -68,6 +87,10 @@ reach the control plane over `kubectl port-forward` and open `/launch-token`.
 | `service.port`                                           | `80`                                        | Service port in front of the proxy's 4180                                                                                                      |
 | `service.annotations`                                    | `{}`                                        | Annotations for the Service                                                                                                                    |
 | `controlPlane.sandboxManager`                            | `{}`                                        | Default sandbox-manager settings; unset means no profile is seeded, so no sandbox can be provisioned                                           |
+| `auth.passcode`                                          | `""`                                        | Passcode for the built-in login, at least 8 characters; required unless `oidc.enabled` or `controlPlane.launchToken`                            |
+| `auth.existingSecret`                                    | `""`                                        | Secret holding the passcode instead of `auth.passcode`                                                                                         |
+| `auth.secretKey`                                         | `passcode`                                  | Key in `auth.existingSecret`                                                                                                                   |
+| `auth.hostname`                                          | `""`                                        | Hostname users open; handed to dsh as `--trusted-host`. Required when `service.type` exposes the passcode listener                              |
 
 ## Sandbox-manager settings as values
 

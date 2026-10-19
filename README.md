@@ -44,8 +44,8 @@ in a sandbox of its own. Hence the name: you can lay back and yawn :)
 - Sandbox backends: Docker, Kubernetes
   [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) with warm
   pools, and Buildkite.
-- Sign-in through oauth2-proxy and your OIDC identity provider, in the Helm
-  chart.
+- Sign-in with a built-in passcode, or through oauth2-proxy and your OIDC
+  identity provider in the Helm chart.
 - Web UI pages for sandbox profiles and idle timers, secrets, AGENTS.md
   instructions, notifications, MCP servers, and plugins, applied without a
   restart.
@@ -60,8 +60,8 @@ in a sandbox of its own. Hence the name: you can lay back and yawn :)
 - Somewhere to run sandboxes: Docker on the same VM, a Kubernetes cluster with
   [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox), or a
   Buildkite organization.
-- Sign-in in front of the Web UI. The Helm chart runs oauth2-proxy against your
-  OIDC provider; on a VM, bring your own.
+- Sign-in for the Web UI. The control plane serves a passcode login; the Helm
+  chart can use oauth2-proxy and your OIDC provider instead.
 - A model API key, added in the Web UI.
 - Optional: a `GITHUB_TOKEN`, or Git credentials for another host, for private
   repositories and pushes.
@@ -75,16 +75,19 @@ sibling container: the whole install on one machine. The same shape works on a
 VM.
 
 ```sh
+export DSH_YAWN_PASSCODE="$(openssl rand -base64 18)"
+printf 'passcode: %s\n' "$DSH_YAWN_PASSCODE"
+
 docker run -d --name dsh-yawn \
   -p 127.0.0.1:3000:3000 -p 8081:8081 \
   -e DSH_YAWN_BIND_ALL=1 \
-  -e DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1 \
+  -e DSH_YAWN_PASSCODE \
   -v dsh-yawn-data:/data \
   -v /var/run/docker.sock:/var/run/docker.sock \
   ghcr.io/zhming0/dsh-yawn-control-plane
 ```
 
-1. Open <http://localhost:3000/launch-token>.
+1. Open <http://localhost:3000/> and enter the passcode printed above.
 2. **Settings → Sandboxes → New profile**: `name: standard`, `backend: docker`.
 3. Add a model credential in the Web UI settings.
 4. Send a message in the **Scratch** workspace, whose sessions start in an

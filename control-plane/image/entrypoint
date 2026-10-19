@@ -41,6 +41,20 @@ if [ "${DSH_YAWN_BIND_ALL:-0}" = 1 ]; then
   fi
   set -- --host "$address" "$@"
 fi
+# DSH_YAWN_PASSCODE mounts the passcode login (see passcode-auth.patch.yml).
+# It replaces the launch token as the browser's login, so it cannot be combined
+# with the /launch-token shortcut.
+if [ -n "${DSH_YAWN_PASSCODE:-}" ]; then
+  if [ "${#DSH_YAWN_PASSCODE}" -lt 8 ]; then
+    echo "dsh-yawn: DSH_YAWN_PASSCODE must be at least 8 characters." >&2
+    exit 1
+  fi
+  if [ "${DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE:-0}" = 1 ]; then
+    echo "dsh-yawn: DSH_YAWN_PASSCODE and DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE are mutually exclusive." >&2
+    exit 1
+  fi
+  set -- --patch /opt/dsh-yawn/passcode-auth.patch.yml "$@"
+fi
 # DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1 mounts GET /launch-token (see
 # launch-token.patch.yml). The overlay is a launcher flag, so it goes before
 # the web app's arguments.

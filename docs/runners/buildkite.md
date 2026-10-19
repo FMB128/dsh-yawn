@@ -129,6 +129,9 @@ controlPlane:
           key: token
 ```
 
+Add these values to the file you installed with; keep its `auth.*` or `oidc.*`
+sign-in values, or the chart refuses to render.
+
 Then run `helm upgrade` with the values file. The pod reads its environment at
 startup, so restart it after changing the Secret.
 

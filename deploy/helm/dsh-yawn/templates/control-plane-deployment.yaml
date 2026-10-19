@@ -30,6 +30,11 @@ spec:
         # the control plane reads the settings once at boot, so stamp the
         # rendered values here: a change rolls the pod.
         checksum/sandbox-settings: {{ include "dsh-yawn.sandboxSettings" . | sha256sum }}
+        {{- if and (not .Values.oidc.enabled) (not .Values.controlPlane.launchToken) (not .Values.auth.existingSecret) }}
+        # The pod reads the passcode from the environment at boot, so a
+        # passcode change has to roll it. A Secret you manage is rotated by you.
+        checksum/auth: {{ .Values.auth.passcode | sha256sum }}
+        {{- end }}
     spec:
       # The Kubernetes backend claims sandboxes with this ServiceAccount's
       # automounted token. The Role and RoleBinding ship with it, in
@@ -70,7 +75,7 @@ spec:
         - name: control-plane
           image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy }}
-          {{- if or .Values.oidc.enabled .Values.controlPlane.extraArgs }}
+          {{- if or .Values.oidc.enabled .Values.auth.hostname .Values.controlPlane.extraArgs }}
           args:
             {{- if .Values.oidc.enabled }}
             # The proxy passes the browser's Host header through, and dsh's
@@ -79,6 +84,12 @@ spec:
             # against DNS rebinding). A bare host, no scheme.
             - --trusted-host
             - {{ .Values.oidc.hostname | quote }}
+            {{- else if .Values.auth.hostname }}
+            # An Ingress, Gateway, or LoadBalancer passes the browser's Host
+            # through; name it so dsh's request fence accepts it. A bare host,
+            # no scheme.
+            - --trusted-host
+            - {{ .Values.auth.hostname | quote }}
             {{- end }}
             {{- with .Values.controlPlane.extraArgs }}
             {{- toYaml . | nindent 12 }}
@@ -92,14 +103,33 @@ spec:
             # keeps dual-stack failover while tolerating slow addresses.
             - name: NODE_OPTIONS
               value: --network-family-autoselection-attempt-timeout=3000
-            # Mounts GET /launch-token unconditionally. The route hands dsh's
-            # login token to anyone who can reach port 3000, and dsh binds pod
-            # loopback, so that is only this pod's own containers and your
-            # port-forward — no Service can reach it, and the oauth2-proxy,
-            # when enabled, authenticates before ever connecting. Never point
-            # a Service at port 3000.
+            {{- if .Values.oidc.enabled }}
+            # The proxy authenticates before connecting to dsh, so the
+            # launch-token shortcut only hands the token to an already
+            # authenticated caller. The OIDC handoff that removes this is a
+            # separate change.
             - name: DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE
               value: "1"
+            {{- else if .Values.controlPlane.launchToken }}
+            # Break-glass only: hands dsh's token to anyone who reaches port
+            # 3000. Leave this off for an internet-facing install.
+            - name: DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE
+              value: "1"
+            {{- else }}
+            # The passcode login. dsh binds the pod address so a Service can
+            # reach it; the passcode gate is what protects that listener.
+            - name: DSH_YAWN_PASSCODE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.existingSecret | default (printf "%s-auth" (include "dsh-yawn.fullname" .)) }}
+                  key: {{ .Values.auth.secretKey }}
+            - name: DSH_YAWN_BIND_ALL
+              value: "1"
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            {{- end }}
             {{- with .Values.controlPlane.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -107,16 +137,23 @@ spec:
             - name: tunnel
               containerPort: 8081
               protocol: TCP
-          # The server binds 127.0.0.1:3000, so a TCP probe against the pod IP
-          # cannot reach it; probe over loopback from inside the container.
-          # An unauthenticated GET / answers 401 once dsh is serving, so that
-          # status counts as ready.
+          # Probe over a host the listener actually binds: loopback for the
+          # proxy and break-glass modes, the pod address for the passcode
+          # listener. An unauthenticated GET / answers 401, or redirects to
+          # the login page, once dsh is serving; either counts as ready.
           readinessProbe:
             exec:
               command:
                 - node
                 - -e
+                {{- if and (not .Values.oidc.enabled) (not .Values.controlPlane.launchToken) }}
+                # The passcode listener binds the pod address, not loopback.
+                # The login redirect follows to a 200; a 401 still counts
+                # while dsh serves without a cookie.
+                - "fetch('http://' + (process.env.POD_IP || '127.0.0.1') + ':3000/').then((r) => process.exit(r.ok || r.status === 401 ? 0 : 1), () => process.exit(1))"
+                {{- else }}
                 - "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok || r.status === 401 ? 0 : 1), () => process.exit(1))"
+                {{- end }}
             initialDelaySeconds: 3
             periodSeconds: 10
           securityContext:

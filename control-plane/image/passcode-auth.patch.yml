@@ -1,0 +1,6 @@
+# Applied as a --patch overlay by dsh-yawn-entrypoint when DSH_YAWN_PASSCODE is
+# set. It puts a passcode login in front of dsh's browser token exchange; the
+# exchange itself stays dsh's, and the launch token never reaches the browser.
+- insert:
+    - id: sandbox-passcode-auth
+      name: '@zhming0/dsh-yawn/passcode-auth'

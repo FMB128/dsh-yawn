@@ -116,7 +116,34 @@ namespace its own Role and tunnel Service live in. */}}
 {{- if and .Values.oidc.enabled (not .Values.oidc.hostname) -}}
 {{- fail "oidc.hostname is required when oidc.enabled is true: it is handed to dsh as --trusted-host and used in the proxy redirect URL." }}
 {{- end -}}
-{{- if and (ne .Values.service.type "ClusterIP") (not .Values.oidc.enabled) -}}
-{{- fail "service.type only exposes the oauth2-proxy, and dsh itself binds pod loopback, so there is nothing to expose while oidc.enabled is false. Enable oidc or keep service.type ClusterIP." }}
+{{- if and .Values.oidc.enabled (or .Values.auth.passcode .Values.auth.existingSecret .Values.auth.hostname) -}}
+{{- fail "oidc.enabled uses the proxy for sign-in; leave auth.passcode, auth.existingSecret, and auth.hostname empty (use oidc.hostname)." }}
+{{- end -}}
+{{- if and .Values.controlPlane.launchToken (or .Values.auth.passcode .Values.auth.existingSecret .Values.auth.hostname) -}}
+{{- fail "controlPlane.launchToken is break-glass only and cannot be combined with auth.passcode, auth.existingSecret, or auth.hostname." }}
+{{- end -}}
+{{- if and .Values.oidc.enabled .Values.controlPlane.launchToken -}}
+{{- fail "oidc.enabled already mounts /launch-token for the proxy handoff; leave controlPlane.launchToken false." }}
+{{- end -}}
+{{- $passcodeMode := and (not .Values.oidc.enabled) (not .Values.controlPlane.launchToken) -}}
+{{- if $passcodeMode -}}
+{{- if and .Values.auth.passcode .Values.auth.existingSecret -}}
+{{- fail "set either auth.passcode or auth.existingSecret, not both." }}
+{{- end -}}
+{{- if not (or .Values.auth.passcode .Values.auth.existingSecret) -}}
+{{- fail "set auth.passcode or auth.existingSecret for the passcode login, or enable oidc. controlPlane.launchToken is break-glass only." }}
+{{- end -}}
+{{- if and .Values.auth.passcode (lt (len .Values.auth.passcode) 8) -}}
+{{- fail "auth.passcode must be at least 8 characters." }}
+{{- end -}}
+{{- if and .Values.auth.existingSecret (not .Values.auth.secretKey) -}}
+{{- fail "auth.secretKey is required with auth.existingSecret." }}
+{{- end -}}
+{{- end -}}
+{{- if and (ne .Values.service.type "ClusterIP") (not .Values.oidc.enabled) (not $passcodeMode) -}}
+{{- fail "service.type only exposes the oauth2-proxy or the passcode listener. Enable oidc, set auth.passcode, or keep service.type ClusterIP with controlPlane.launchToken." }}
+{{- end -}}
+{{- if and $passcodeMode (ne .Values.service.type "ClusterIP") (not .Values.auth.hostname) -}}
+{{- fail "auth.hostname is required when service.type exposes the passcode listener: it is handed to dsh as --trusted-host so the browser's Host passes dsh's request fence." }}
 {{- end -}}
 {{- end -}}

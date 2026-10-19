@@ -71,6 +71,10 @@
       "types": "./dist/launch-token.d.ts",
       "default": "./dist/launch-token.js"
     },
+    "./passcode-auth": {
+      "types": "./dist/passcode-auth.d.ts",
+      "default": "./dist/passcode-auth.js"
+    },
     "./scratch-workspace": {
       "types": "./dist/scratch-workspace.d.ts",
       "default": "./dist/scratch-workspace.js"

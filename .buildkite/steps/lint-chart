@@ -7,16 +7,20 @@ ensure_tools
 CHART="deploy/helm/dsh-yawn"
 
 echo "--- :helm: Linting the chart"
-helm lint "$CHART" --namespace dsh-yawn
+helm lint "$CHART" --namespace dsh-yawn --set auth.passcode=test-passcode
 
 render() {
   helm template dsh-yawn-control-plane "$CHART" --namespace dsh-yawn "$@"
 }
 
 echo "--- :helm: Rendering the default and proxy value sets"
-render >/tmp/chart-default.yaml
-grep -q "DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE" /tmp/chart-default.yaml \
-  || { echo "default render lost the /launch-token route" >&2; exit 1; }
+render --set auth.passcode=test-passcode >/tmp/chart-default.yaml
+grep -q "DSH_YAWN_PASSCODE" /tmp/chart-default.yaml \
+  || { echo "default render lost the passcode login" >&2; exit 1; }
+if grep -q "DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE" /tmp/chart-default.yaml; then
+  echo "default render still mounts the /launch-token bypass" >&2
+  exit 1
+fi
 grep -q "ws://dsh-yawn-control-plane-tunnel.dsh-yawn.svc.cluster.local:8081/tunnel" /tmp/chart-default.yaml \
   || { echo "dsh-yawn-runner-config lost the in-cluster tunnel address" >&2; exit 1; }
 render --set oidc.enabled=true --set oidc.hostname=dsh.example.com \
@@ -30,7 +34,8 @@ done
 # controlPlane.extraEnv is how a boot-time credential (the Buildkite API token)
 # reaches the process from a Secret, so the block has to render where dsh
 # reads it.
-render --set controlPlane.extraEnv[0].name=BUILDKITE_API_TOKEN \
+render --set auth.passcode=test-passcode \
+  --set controlPlane.extraEnv[0].name=BUILDKITE_API_TOKEN \
   --set controlPlane.extraEnv[0].valueFrom.secretKeyRef.name=dsh-buildkite \
   --set controlPlane.extraEnv[0].valueFrom.secretKeyRef.key=token >/tmp/chart-control-plane-env.yaml
 for expected in "name: BUILDKITE_API_TOKEN" "name: dsh-buildkite"; do
@@ -41,7 +46,8 @@ done
 # in-cluster dev control plane (dev-cluster.sh --control-plane-image) is no
 # exception. The render has to carry the settings file and the mount, or it boots
 # with the seeded `profiles: {}` and cannot provision.
-render --set controlPlane.sandboxManager.profiles.standard.backend=kas \
+render --set auth.passcode=test-passcode \
+  --set controlPlane.sandboxManager.profiles.standard.backend=kas \
   --set controlPlane.sandboxManager.profiles.standard.warmPool=dsh-yawn-universal \
   >/tmp/chart-profile.yaml
 for expected in "name: dsh-yawn-control-plane-sandbox-settings" \
@@ -55,6 +61,7 @@ done
 # elsewhere would claim in a namespace its pool is not in. `render` pins the
 # dsh-yawn namespace, so this one calls helm directly.
 helm template dsh-yawn-control-plane "$CHART" --namespace platform \
+  --set auth.passcode=test-passcode \
   --set controlPlane.sandboxManager.profiles.standard.backend=kas \
   --set controlPlane.sandboxManager.profiles.standard.warmPool=dsh-yawn-universal \
   --show-only templates/control-plane-sandbox-settings-configmap.yaml >/tmp/chart-profile-ns.yaml
@@ -71,19 +78,22 @@ expect_fail() {
 }
 # The sandbox pool reads fixed names, so the release name is part of the
 # contract. `helm template` takes the name as an argument, not a flag.
-if helm template other "$CHART" --namespace dsh-yawn >/dev/null 2>&1; then
+if helm template other "$CHART" --namespace dsh-yawn --set auth.passcode=test-passcode >/dev/null 2>&1; then
   echo "guard failed: a foreign release name rendered successfully" >&2; exit 1
 fi
 expect_fail "a kas profile in a foreign namespace" \
+  --set auth.passcode=test-passcode \
   --set controlPlane.sandboxManager.profiles.standard.backend=kas \
   --set controlPlane.sandboxManager.profiles.standard.namespace=elsewhere
 expect_fail "managed settings without profiles" \
+  --set auth.passcode=test-passcode \
   --set controlPlane.sandboxManager.defaultProfile=standard
 expect_fail "a startup setting under sandboxManager" \
+  --set auth.passcode=test-passcode \
   --set controlPlane.sandboxManager.profiles.standard.backend=kas \
   --set controlPlane.sandboxManager.workspace=/tmp/elsewhere
 expect_fail "oidc without hostname" --set oidc.enabled=true
-expect_fail "LoadBalancer without the proxy" \
+expect_fail "LoadBalancer without a sign-in listener" \
   --set service.type=LoadBalancer
 
 echo "--- :kubernetes: Rendering the sandbox pool"
@@ -243,7 +253,7 @@ grep -q "^  DSH_YAWN_CONTROL_PLANE_URL:" /tmp/chart-default.yaml \
   || { echo "chart's runner config lost its DSH_YAWN_CONTROL_PLANE_URL key" >&2; exit 1; }
 grep -q "resourceNames: \[dsh-yawn-registration-token\]" /tmp/chart-default.yaml \
   || { echo "chart's control-plane Role lost the runner-token Secret" >&2; exit 1; }
-if grep -q "^kind: Secret$" /tmp/chart-default.yaml; then
+if grep -q "name: dsh-yawn-registration-token" /tmp/chart-default.yaml; then
   echo "the chart ships a Secret that could reset the control plane's runner token" >&2
   exit 1
 fi

@@ -26,9 +26,9 @@ permissions it needs to manage sandboxes.
 - `helm` 3.8 or later.
 - A default StorageClass, or a storage class name for the control plane's data
   volume.
-- An OIDC identity provider. dsh has no user authentication of its own, so the
-  distribution puts oauth2-proxy in front of it and you supply the client.
-  Skip this if `kubectl port-forward` access is enough.
+- A sign-in method: the built-in passcode login (`auth.passcode`), or an OIDC
+  identity provider plus the oauth2-proxy sidecar. `controlPlane.launchToken`
+  is break-glass and not a sign-in.
 
 ### Install
 
@@ -36,8 +36,25 @@ The examples use namespace `dsh-yawn`. One namespace holds one control plane,
 and the release must be named `dsh-yawn-control-plane`: the Kubernetes runner
 manifests read fixed names that this release owns.
 
-Create the proxy's OIDC Secret first. Secret values do not belong in values
-files, so the chart deliberately never sees them:
+For the built-in passcode login, set a passcode of at least 8 characters in
+your values. The chart stores it in a Secret it owns; `auth.existingSecret`
+keeps it in one you manage instead:
+
+```yaml
+# dsh-yawn.values.yaml
+auth:
+  passcode: choose-a-long-passphrase
+  hostname: dsh.example.com
+service:
+  type: LoadBalancer
+```
+
+`auth.hostname` is the name users open; the chart hands it to dsh as
+`--trusted-host`. For an Ingress or a Gateway API route, point it at the
+Service and use the same name.
+
+For OIDC instead, create the proxy's Secret first. Secret values do not belong
+in values files, so the chart deliberately never sees them:
 
 ```sh
 kubectl create namespace dsh-yawn
@@ -74,8 +91,9 @@ Secret in the namespace; `patch` is limited to that one Secret.
 
 The chart's Service is a ClusterIP anchor by default. Either set
 `service.type=LoadBalancer`, as above, or point your own Ingress or Gateway API
-route at it. Whatever fronts dsh must serve HTTPS, because the proxy's cookie
-is secure, and pass WebSockets and large request bodies. With ingress-nginx:
+route at it. Whatever fronts dsh must serve HTTPS — the passcode and the
+session cookie cross it — and must pass WebSockets and large request bodies.
+With ingress-nginx:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -116,20 +134,29 @@ spec:
       secretName: dsh-yawn-tls
 ```
 
-The host must match `oidc.hostname`. The chart passes it to dsh as
-`--trusted-host`, because dsh rejects `/api` requests whose `Host` header is
-neither loopback nor trusted.
+The host must match `oidc.hostname` or `auth.hostname`. The chart passes it to
+dsh as `--trusted-host`, because dsh rejects `/api` requests whose `Host`
+header is neither loopback nor trusted.
 
-Users sign in at `https://dsh.example.com/launch-token`. Everyone the identity
-provider admits shares the same sessions, secrets, and sandboxes, so set
-`oidc.emailDomains` accordingly.
+With the passcode login, users open `https://dsh.example.com/` and enter the
+passcode. With OIDC, they land signed in through `/launch-token`; everyone the
+identity provider admits shares the same sessions, secrets, and sandboxes, so
+set `oidc.emailDomains` accordingly.
 
-Without `oidc.enabled`, or to skip the proxy, use a port-forward:
+To use only `kubectl port-forward`, keep `service.type: ClusterIP`, then:
 
 ```sh
 kubectl -n dsh-yawn port-forward deploy/dsh-yawn-control-plane 3000:3000
-# open http://localhost:3000/launch-token
+# open http://localhost:3000/ and enter the passcode
 ```
+
+OIDC needs the hostname you configured: its callback URL is
+`https://<oidc.hostname>/oauth2/callback`, so a bare port-forward does not
+match it.
+
+`controlPlane.launchToken: true` is the break-glass fallback: it mounts
+`/launch-token` and exposes dsh's process token to anyone who reaches port
+3000. It cannot be combined with `auth.passcode` or `oidc.enabled`.
 
 ### Verify
 
@@ -137,10 +164,10 @@ kubectl -n dsh-yawn port-forward deploy/dsh-yawn-control-plane 3000:3000
 kubectl -n dsh-yawn rollout status deployment/dsh-yawn-control-plane --timeout=300s
 ```
 
-The pod becomes Ready when dsh is serving. Open the address you exposed; you
-should land signed in through `/launch-token`. You can then create a session,
-add secrets, and add a repository workspace. The first tool call fails until a
-runner is installed, which is expected.
+The pod becomes Ready when dsh is serving. Open the address you exposed; the
+passcode login appears at `/login`, or OIDC lands you through `/launch-token`.
+You can then create a session, add secrets, and add a repository workspace. The
+first tool call fails until a runner is installed, which is expected.
 
 ### Upgrade
 
@@ -157,15 +184,18 @@ UI. If that refresh fails, the seed logs a warning, keeps the previous
 
 The same control-plane image runs as one Docker container on any machine you
 keep on. Sandboxes then run as sibling containers on that machine's Docker, or
-on Buildkite. Unlike the chart, this path ships no authentication: you bring
-the HTTPS proxy and the sign-in in front of it.
+on Buildkite. The image serves the same passcode login; bring an HTTPS proxy
+for the network path, not an authentication layer.
 
 ### Run the container
 
 ```sh
+export DSH_YAWN_PASSCODE="$(openssl rand -base64 18)"
+printf 'passcode: %s\n' "$DSH_YAWN_PASSCODE"
+
 docker run -d --name dsh-yawn --restart unless-stopped \
   --network host \
-  -e DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1 \
+  -e DSH_YAWN_PASSCODE \
   -v dsh-yawn-data:/data \
   -v /var/run/docker.sock:/var/run/docker.sock \
   ghcr.io/zhming0/dsh-yawn-control-plane:<version> \
@@ -176,10 +206,9 @@ This differs from the [README's quick start](../README.md#quick-start) on
 purpose:
 
 - `--network host` without `DSH_YAWN_BIND_ALL` keeps the Web UI on the VM's
-  loopback, `127.0.0.1:3000`, as in the Kubernetes pod. Sandbox containers
-  cannot reach it, so only your proxy can use `/launch-token`. On a Docker
-  network the quick start's way, a sandbox could reach port 3000 and take the
-  sign-in token.
+  loopback, `127.0.0.1:3000`. Sandbox containers cannot reach it, so only your
+  proxy can serve the passcode form. On a Docker network the quick start's way,
+  a sandbox can reach port 3000, but the passcode gate is what protects it.
 - The runner tunnel listens on port 8081 on every interface, so sandboxes on
   this machine can dial it. Keep it off the internet with a firewall.
 - `--trusted-host` names the hostname users open. dsh rejects `/api` requests
@@ -188,20 +217,23 @@ purpose:
 
 ### Authentication
 
-Any reverse proxy works, such as Caddy or nginx, together with an
-authentication layer, such as oauth2-proxy with your OIDC provider, an
-identity-aware proxy, or a private network only your team can join. Run it on
-the VM itself, or in a container with `--network host`, so it can reach
-loopback. It must:
+The passcode is the sign-in. Put an HTTPS reverse proxy in front, such as Caddy
+or nginx; it only terminates TLS. Run it on the VM itself, or in a container
+with `--network host`, so it can reach loopback. It must:
 
 - serve HTTPS and proxy to `http://127.0.0.1:3000`, passing the `Host` header
   through;
 - pass WebSockets, keep connections open for hours, and accept request bodies
-  of a few hundred megabytes;
-- admit only people you trust with the whole control plane. Everyone it admits
-  shares the same sessions, secrets, and sandboxes.
+  of a few hundred megabytes.
 
-Users then open `https://dsh.example.com/launch-token` to sign in.
+Users then open `https://dsh.example.com/` and enter the passcode. The
+distribution has no separate OIDC handoff on this path yet; if you already run
+an identity-aware proxy, you can put it in front of the passcode login for a
+second factor.
+
+`DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1` is the break-glass fallback. It
+serves `/launch-token`, which hands dsh's process token to anyone who can reach
+port 3000; do not use it on an internet-facing install.
 
 For runners outside this machine, such as Buildkite agents, also route the
 exact path `/tunnel` to port 8081 and leave authentication off that path: the
