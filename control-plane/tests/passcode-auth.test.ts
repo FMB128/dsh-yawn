@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 
 import { Context } from "@deepseek-ai/cordis";
 import type { ConnectionIndexResponse } from "@deepseek-ai/dsh-client-connection";
+import type { IndexInjection } from "@deepseek-ai/dsh-host-webserver";
 import { afterEach, describe, expect, it } from "vitest";
 
 import * as passcodeAuth from "../src/passcode-auth.js";
@@ -278,6 +279,27 @@ describe("passcode auth", () => {
     expect(out.headers.location).toBe(LOGIN_PATH);
     expect(out.headers["set-cookie"]).toContain("dsh-auth-test=");
     expect(out.headers["set-cookie"]).toContain("Max-Age=0");
+  });
+
+  it("advertises the logout route to the web client", async () => {
+    mounted = await mount();
+    const table: IndexInjection[] = [];
+    mounted.ctx.emit("webserver/index-inject", table);
+    expect(table).toContainEqual({
+      kind: "global",
+      name: "__DSH_YAWN_AUTH__",
+      value: { logoutPath: LOGOUT_PATH },
+    });
+  });
+
+  it("stops advertising logout when disposed", async () => {
+    mounted = await mount();
+    const { ctx } = mounted;
+    await ctx.fiber.dispose();
+    mounted = undefined;
+    const table: IndexInjection[] = [];
+    ctx.emit("webserver/index-inject", table);
+    expect(table).toEqual([]);
   });
 
   it("restores dsh's index authentication when disposed", async () => {

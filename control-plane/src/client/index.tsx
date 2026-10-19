@@ -22,6 +22,8 @@ import { SandboxProfileChip } from "./profile.js";
 import { RepositoryDirectoryFlow } from "./repository-directory-flow.js";
 import { SandboxStatusTab } from "./sandbox.js";
 import { GitCredentialsSettings } from "./git-credentials.js";
+import { logoutPath } from "./logout-route.js";
+import { MoreMenu, MORE_MENU_STYLE } from "./more-menu.js";
 import { SandboxesSettings } from "./settings.js";
 import { SecretsSettings } from "./secrets.js";
 import { installMediaSession } from "./media-session.js";
@@ -352,6 +354,27 @@ export async function apply(ctx: Context) {
       );
     },
   );
+
+  // A checkout profile mounts no sign-in row, so the host injects no
+  // `__DSH_YAWN_AUTH__` and the shell keeps its plain Settings trigger. With
+  // sign-in mounted, this takes the same launcher seat dsh's account menu
+  // used: an ellipsis row whose menu holds Settings and Sign out.
+  if (logoutPath(window) !== undefined) {
+    ctx.effect(() => {
+      const style = document.createElement("style");
+      style.textContent = MORE_MENU_STYLE;
+      document.head.append(style);
+      return () => style.remove();
+    }, "auth: more menu style");
+    ctx.slots.inject("settings.launcher", function* registerMoreMenu() {
+      yield ctx.slots.register(
+        {
+          name: "settings.launcher",
+        },
+        MoreMenu,
+      );
+    });
+  }
 
   return () => {
     void disposeRemote();

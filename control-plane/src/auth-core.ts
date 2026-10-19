@@ -15,6 +15,7 @@ import type {
   ConnectionIndexResponse,
   HostConnectionHandle,
 } from "@deepseek-ai/dsh-client-connection";
+import type {} from "@deepseek-ai/dsh-host-webserver";
 
 /** The sign-in form and its POST target. */
 export const LOGIN_PATH = "/login";
@@ -256,6 +257,19 @@ export function installLogout(
   authorizeIndex: HostConnectionHandle["authorizeIndex"],
 ): void {
   const connection = ctx.connection;
+  // Tell the client bundle where the logout route is. The row is mounted only
+  // when a sign-in mode is configured, so a checkout profile shows no action.
+  ctx.effect(
+    () =>
+      ctx.on("webserver/index-inject", (table) => {
+        table.push({
+          kind: "global",
+          name: "__DSH_YAWN_AUTH__",
+          value: { logoutPath: LOGOUT_PATH },
+        });
+      }),
+    "auth: logout index injection",
+  );
   ctx.effect(
     () =>
       ctx.webServer.register({
