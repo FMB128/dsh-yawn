@@ -1,8 +1,7 @@
 {{- include "dsh-yawn.validate" . }}
-{{- if or .Values.oidc.enabled (and (not .Values.oidc.enabled) (not .Values.controlPlane.launchToken)) }}
-{{- /* The sign-in listener is the thing you expose. ClusterIP is the anchor: an
-Ingress, a Gateway API route, or a LoadBalancer Service of your own can point
-at it — or set service.type to expose this one directly. */}}
+{{- /* The control plane's sign-in listener is the thing you expose. ClusterIP
+is the anchor: an Ingress, a Gateway API route, or a LoadBalancer Service of
+your own can point at it — or set service.type to expose this one directly. */}}
 apiVersion: v1
 kind: Service
 metadata:
@@ -21,5 +20,4 @@ spec:
   ports:
     - name: http
       port: {{ .Values.service.port }}
-      targetPort: {{ if .Values.oidc.enabled }}4180{{ else }}3000{{ end }}
-{{- end }}
+      targetPort: 3000

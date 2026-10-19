@@ -83,10 +83,25 @@ sandboxManager:
 {{ pick $managed "profiles" "defaultProfile" "idleMs" "expiresAfterMs" "readyTimeoutMs" | toYaml | indent 2 }}
 {{- end }}
 
+{{/* The OIDC redirect URL registered at the issuer. Defaults to the public
+hostname the operator configured. */}}
+{{- define "dsh-yawn.oidcRedirectUrl" -}}
+{{- .Values.auth.oidc.redirectUrl | default (printf "https://%s/oidc/callback" .Values.auth.hostname) }}
+{{- end }}
+
 {{/* Fails the render on combinations that cannot work, so `helm install`
 cannot produce a control plane that never becomes Ready. */}}
 {{- define "dsh-yawn.validate" -}}
 {{- $root := . -}}
+{{- if .Values.oidc -}}
+{{- fail "the oidc.* values were replaced by auth.mode=oidc and auth.oidc.*; remove the old oidc block and move its settings under auth.oidc." }}
+{{- end -}}
+{{- if .Values.controlPlane.launchToken -}}
+{{- fail "controlPlane.launchToken was removed with the launch-token route; set auth.mode to passcode or oidc." }}
+{{- end -}}
+{{- if contains "://" .Values.auth.hostname -}}
+{{- fail "auth.hostname must be a bare host, no scheme." }}
+{{- end -}}
 {{- if ne .Release.Name "dsh-yawn-control-plane" -}}
 {{- fail (printf "install this chart as release `dsh-yawn-control-plane`: the sandbox pool reads the fixed names dsh-yawn-control-plane-tunnel, dsh-yawn-runner-config, and dsh-yawn-registration-token. Got %q." .Release.Name) }}
 {{- end -}}
@@ -113,25 +128,16 @@ namespace its own Role and tunnel Service live in. */}}
 {{- end }}
 {{- end }}
 {{- end -}}
-{{- if and .Values.oidc.enabled (not .Values.oidc.hostname) -}}
-{{- fail "oidc.hostname is required when oidc.enabled is true: it is handed to dsh as --trusted-host and used in the proxy redirect URL." }}
+{{- $mode := .Values.auth.mode }}
+{{- if not (has $mode (list "passcode" "oidc")) -}}
+{{- fail "auth.mode must be passcode or oidc." }}
 {{- end -}}
-{{- if and .Values.oidc.enabled (or .Values.auth.passcode .Values.auth.existingSecret .Values.auth.hostname) -}}
-{{- fail "oidc.enabled uses the proxy for sign-in; leave auth.passcode, auth.existingSecret, and auth.hostname empty (use oidc.hostname)." }}
-{{- end -}}
-{{- if and .Values.controlPlane.launchToken (or .Values.auth.passcode .Values.auth.existingSecret .Values.auth.hostname) -}}
-{{- fail "controlPlane.launchToken is break-glass only and cannot be combined with auth.passcode, auth.existingSecret, or auth.hostname." }}
-{{- end -}}
-{{- if and .Values.oidc.enabled .Values.controlPlane.launchToken -}}
-{{- fail "oidc.enabled already mounts /launch-token for the proxy handoff; leave controlPlane.launchToken false." }}
-{{- end -}}
-{{- $passcodeMode := and (not .Values.oidc.enabled) (not .Values.controlPlane.launchToken) -}}
-{{- if $passcodeMode -}}
+{{- if eq $mode "passcode" -}}
 {{- if and .Values.auth.passcode .Values.auth.existingSecret -}}
 {{- fail "set either auth.passcode or auth.existingSecret, not both." }}
 {{- end -}}
 {{- if not (or .Values.auth.passcode .Values.auth.existingSecret) -}}
-{{- fail "set auth.passcode or auth.existingSecret for the passcode login, or enable oidc. controlPlane.launchToken is break-glass only." }}
+{{- fail "set auth.passcode or auth.existingSecret for the passcode login." }}
 {{- end -}}
 {{- if and .Values.auth.passcode (lt (len .Values.auth.passcode) 8) -}}
 {{- fail "auth.passcode must be at least 8 characters." }}
@@ -139,11 +145,31 @@ namespace its own Role and tunnel Service live in. */}}
 {{- if and .Values.auth.existingSecret (not .Values.auth.secretKey) -}}
 {{- fail "auth.secretKey is required with auth.existingSecret." }}
 {{- end -}}
+{{- if or .Values.auth.oidc.issuer .Values.auth.oidc.clientId .Values.auth.oidc.clientSecret .Values.auth.oidc.existingSecret .Values.auth.oidc.redirectUrl .Values.auth.oidc.allowedEmails .Values.auth.oidc.allowedDomains -}}
+{{- fail "auth.oidc.* applies only to auth.mode=oidc." }}
 {{- end -}}
-{{- if and (ne .Values.service.type "ClusterIP") (not .Values.oidc.enabled) (not $passcodeMode) -}}
-{{- fail "service.type only exposes the oauth2-proxy or the passcode listener. Enable oidc, set auth.passcode, or keep service.type ClusterIP with controlPlane.launchToken." }}
+{{- else -}}
+{{- if or .Values.auth.passcode .Values.auth.existingSecret -}}
+{{- fail "auth.passcode and auth.existingSecret apply only to auth.mode=passcode." }}
 {{- end -}}
-{{- if and $passcodeMode (ne .Values.service.type "ClusterIP") (not .Values.auth.hostname) -}}
-{{- fail "auth.hostname is required when service.type exposes the passcode listener: it is handed to dsh as --trusted-host so the browser's Host passes dsh's request fence." }}
+{{- if not .Values.auth.hostname -}}
+{{- fail "auth.hostname is required for auth.mode=oidc: it is handed to dsh as --trusted-host and used for the default redirect URL." }}
+{{- end -}}
+{{- if or (not .Values.auth.oidc.issuer) (not .Values.auth.oidc.clientId) -}}
+{{- fail "auth.oidc.issuer and auth.oidc.clientId are required for auth.mode=oidc." }}
+{{- end -}}
+{{- if and .Values.auth.oidc.clientSecret .Values.auth.oidc.existingSecret -}}
+{{- fail "set either auth.oidc.clientSecret or auth.oidc.existingSecret, not both." }}
+{{- end -}}
+{{- if and .Values.auth.oidc.existingSecret (not .Values.auth.oidc.clientSecretKey) -}}
+{{- fail "auth.oidc.clientSecretKey is required with auth.oidc.existingSecret." }}
+{{- end -}}
+{{- if and (not .Values.auth.oidc.allowedEmails) (not .Values.auth.oidc.allowedDomains) -}}
+{{- fail "set auth.oidc.allowedEmails or auth.oidc.allowedDomains; an OIDC install must name who may enter." }}
 {{- end -}}
 {{- end -}}
+{{- if and (ne .Values.service.type "ClusterIP") (not .Values.auth.hostname) -}}
+{{- fail "auth.hostname is required when service.type exposes the control plane: it is handed to dsh as --trusted-host so the browser's Host passes dsh's request fence." }}
+{{- end -}}
+{{- end -}}
+

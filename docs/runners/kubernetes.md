@@ -119,7 +119,7 @@ whole list under `/spec/podTemplate/spec/volumes`. See
 
 ## Point the control plane at the pool
 
-Add this to the values file you installed with; keep its `auth.*` or `oidc.*`
+Add this to the values file you installed with; keep its `auth.*`
 sign-in values, or the chart refuses to render:
 
 ```yaml

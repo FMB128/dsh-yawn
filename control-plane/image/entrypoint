@@ -41,24 +41,48 @@ if [ "${DSH_YAWN_BIND_ALL:-0}" = 1 ]; then
   fi
   set -- --host "$address" "$@"
 fi
-# DSH_YAWN_PASSCODE mounts the passcode login (see passcode-auth.patch.yml).
-# It replaces the launch token as the browser's login, so it cannot be combined
-# with the /launch-token shortcut.
-if [ -n "${DSH_YAWN_PASSCODE:-}" ]; then
-  if [ "${#DSH_YAWN_PASSCODE}" -lt 8 ]; then
-    echo "dsh-yawn: DSH_YAWN_PASSCODE must be at least 8 characters." >&2
-    exit 1
-  fi
-  if [ "${DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE:-0}" = 1 ]; then
-    echo "dsh-yawn: DSH_YAWN_PASSCODE and DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE are mutually exclusive." >&2
-    exit 1
-  fi
-  set -- --patch /opt/dsh-yawn/passcode-auth.patch.yml "$@"
-fi
-# DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1 mounts GET /launch-token (see
-# launch-token.patch.yml). The overlay is a launcher flag, so it goes before
-# the web app's arguments.
+# The control plane ships two sign-in modes. One of them is required: the
+# launch-token route is gone, so an unconfigured container must not fall back
+# to reading a token from the log.
 if [ "${DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE:-0}" = 1 ]; then
-  set -- --patch /opt/dsh-yawn/launch-token.patch.yml "$@"
+  echo "dsh-yawn: the launch-token route was removed; set DSH_YAWN_PASSCODE or DSH_YAWN_OIDC_ISSUER." >&2
+  exit 1
 fi
+auth_mode=""
+if [ -n "${DSH_YAWN_OIDC_ISSUER:-}" ]; then
+  auth_mode=oidc
+fi
+if [ -n "${DSH_YAWN_PASSCODE:-}" ]; then
+  if [ "$auth_mode" = oidc ]; then
+    echo "dsh-yawn: set either DSH_YAWN_PASSCODE or DSH_YAWN_OIDC_ISSUER, not both." >&2
+    exit 1
+  fi
+  auth_mode=passcode
+fi
+case "$auth_mode" in
+  passcode)
+    if [ "${#DSH_YAWN_PASSCODE}" -lt 8 ]; then
+      echo "dsh-yawn: DSH_YAWN_PASSCODE must be at least 8 characters." >&2
+      exit 1
+    fi
+    set -- --patch /opt/dsh-yawn/passcode-auth.patch.yml "$@"
+    ;;
+  oidc)
+    if [ -z "${DSH_YAWN_OIDC_ISSUER:-}" ] \
+      || [ -z "${DSH_YAWN_OIDC_CLIENT_ID:-}" ] \
+      || [ -z "${DSH_YAWN_OIDC_REDIRECT_URL:-}" ]; then
+      echo "dsh-yawn: DSH_YAWN_OIDC_ISSUER, DSH_YAWN_OIDC_CLIENT_ID, and DSH_YAWN_OIDC_REDIRECT_URL must be set for OIDC sign-in." >&2
+      exit 1
+    fi
+    if [ -z "${DSH_YAWN_OIDC_ALLOWED_EMAILS:-}" ] && [ -z "${DSH_YAWN_OIDC_ALLOWED_DOMAINS:-}" ]; then
+      echo "dsh-yawn: set DSH_YAWN_OIDC_ALLOWED_EMAILS or DSH_YAWN_OIDC_ALLOWED_DOMAINS." >&2
+      exit 1
+    fi
+    set -- --patch /opt/dsh-yawn/oidc-auth.patch.yml "$@"
+    ;;
+  *)
+    echo "dsh-yawn: set DSH_YAWN_PASSCODE, or DSH_YAWN_OIDC_ISSUER with its OIDC settings." >&2
+    exit 1
+    ;;
+esac
 exec dsh --profile web "$@"

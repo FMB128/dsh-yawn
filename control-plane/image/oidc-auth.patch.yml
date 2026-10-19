@@ -1,0 +1,7 @@
+# Applied as a --patch overlay by dsh-yawn-entrypoint when the OIDC settings
+# are present. It runs the authorization code flow in the control plane and
+# mints dsh's browser cookie through dsh's own exchange; no oauth2-proxy and no
+# launch-token route are involved.
+- insert:
+    - id: sandbox-oidc-auth
+      name: '@zhming0/dsh-yawn/oidc-auth'

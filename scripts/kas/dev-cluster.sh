@@ -142,7 +142,7 @@ if [[ -n "$CONTROL_PLANE_IMAGE" ]]; then
   # `profiles: {}`, so without it the control plane boots but cannot provision.
   helm template dsh-yawn-control-plane "$ROOT_DIR/deploy/helm/dsh-yawn" \
     --namespace dsh-yawn \
-    --set controlPlane.launchToken=true \
+    --set auth.passcode=dev-passcode \
     --set "controlPlane.image.repository=${CONTROL_PLANE_IMAGE%%:*}" \
     --set "controlPlane.image.tag=${CONTROL_PLANE_IMAGE##*:}" \
     --set controlPlane.sandboxManager.profiles.standard.backend=kas \
@@ -153,7 +153,7 @@ else
   # runner-config ConfigMap DSH_YAWN_CONTROL_PLANE_URL comes from. dsh itself is elsewhere.
   helm template dsh-yawn-control-plane "$ROOT_DIR/deploy/helm/dsh-yawn" \
     --namespace dsh-yawn \
-    --set controlPlane.launchToken=true \
+    --set auth.passcode=dev-passcode \
     --set "runner.controlPlaneUrl=$DSH_YAWN_CONTROL_PLANE_URL" \
     --show-only templates/control-plane-rbac.yaml \
     --show-only templates/runner-config-configmap.yaml \

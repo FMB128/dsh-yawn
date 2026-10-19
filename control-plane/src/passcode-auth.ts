@@ -29,17 +29,28 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { Context } from "@deepseek-ai/cordis";
-import type {
-  ConnectionIndexResponse,
-  HostConnectionHandle,
-} from "@deepseek-ai/dsh-client-connection";
+import type { HostConnectionHandle } from "@deepseek-ai/dsh-client-connection";
+
+import {
+  LOGIN_PATH,
+  LOGOUT_PATH,
+  hasLaunchToken,
+  header,
+  installHealth,
+  installIndexGate,
+  installLogout,
+  loggedIn,
+  mintDshCookie,
+  redirect,
+  sendHtml,
+  sendText,
+  untrusted,
+} from "./auth-core.js";
+
+export { LOGIN_PATH, LOGOUT_PATH, hasLaunchToken };
 
 /** The deployment-provided passcode. */
 export const PASSCODE_ENV = "DSH_YAWN_PASSCODE";
-/** The login form and its POST target. */
-export const LOGIN_PATH = "/login";
-/** Clears the dsh cookie and returns to the login form. */
-export const LOGOUT_PATH = "/logout";
 
 const MIN_PASSCODE_LENGTH = 8;
 const MAX_ATTEMPTS = 10;
@@ -55,28 +66,6 @@ export interface PasscodeAuthConfig {
   passcode?: string;
 }
 
-interface CapturedResponse extends ConnectionIndexResponse {
-  status: number;
-  headers: Record<string, string>;
-}
-
-/** Collects what dsh's `authorizeIndex` would write, without touching the real response. */
-function capture(): CapturedResponse {
-  const captured: CapturedResponse = {
-    status: 0,
-    headers: {},
-    writeHead(status, headers) {
-      captured.status = status;
-      Object.assign(captured.headers, headers ?? {});
-      return captured;
-    },
-    end() {
-      return captured;
-    },
-  };
-  return captured;
-}
-
 /** SHA-256 makes the comparison independent of the passcode's length. */
 function digest(value: string): Buffer {
   return createHash("sha256").update(value, "utf8").digest();
@@ -86,36 +75,13 @@ function passcodeMatches(given: string, expected: string): boolean {
   return timingSafeEqual(digest(given), digest(expected));
 }
 
-/** Whether the request is dsh's launch-token login URL. */
-export function hasLaunchToken(request: IncomingMessage): boolean {
-  try {
-    return new URL(request.url ?? "/", "http://dsh.invalid").searchParams.has(
-      "token",
-    );
-  } catch {
-    return false;
-  }
-}
-
-function header(request: IncomingMessage, name: string): string {
-  const value: unknown = request.headers[name];
-  if (typeof value === "string") {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    const first: unknown = value[0];
-    return typeof first === "string" ? first : "";
-  }
-  return "";
-}
-
 function isForm(request: IncomingMessage): boolean {
   return header(request, "content-type").startsWith(
     "application/x-www-form-urlencoded",
   );
 }
 
-/** Read a small form body; the login form is one field. */
+/** Read the one-field login form; bounded so a large body cannot grow memory. */
 async function readForm(request: IncomingMessage): Promise<URLSearchParams> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -181,21 +147,6 @@ function peerOf(request: IncomingMessage): string {
   return request.socket?.remoteAddress ?? "unknown";
 }
 
-function securityHeaders(contentType: string): Record<string, string> {
-  return {
-    "content-type": contentType,
-    "cache-control": "no-store",
-    "x-content-type-options": "nosniff",
-    "x-frame-options": "DENY",
-    // Do not send `Referrer-Policy: no-referrer` here. Chrome submits a form
-    // from such a page with `Origin: null`, and dsh's Host/Origin fence
-    // rejects that before this row sees the passcode. Redirects still carry
-    // no-referrer, which is where the URL could leak a token.
-    "content-security-policy":
-      "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-  };
-}
-
 function loginPage(error: string | undefined): string {
   const message = error === undefined ? "" : `<p role="alert">${error}</p>`;
   return `<!doctype html>
@@ -231,79 +182,69 @@ ${message}
 `;
 }
 
-function sendHtml(
-  response: ServerResponse,
-  status: number,
-  body: string,
-  extra: Record<string, string> = {},
-): void {
-  response.writeHead(status, {
-    ...securityHeaders("text/html; charset=utf-8"),
-    ...extra,
-  });
-  response.end(body);
-}
-
-function sendText(
-  response: ServerResponse,
-  status: number,
-  body: string,
-  extra: Record<string, string> = {},
-): void {
-  response.writeHead(status, {
-    ...securityHeaders("text/plain; charset=utf-8"),
-    ...extra,
-  });
-  response.end(body);
-}
-
-function redirect(
-  response: ServerResponse,
-  location: string,
-  extra: Record<string, string> = {},
-): void {
-  response.writeHead(303, {
-    location,
-    "cache-control": "no-store",
-    "referrer-policy": "no-referrer",
-    ...extra,
-  });
-  response.end();
-}
-
-/**
- * Exchange dsh's launch token for a browser cookie without sending the token
- * to the client. `authorizeIndex` already owns the exchange; calling it with a
- * synthetic root request keeps the cookie format, audience, and TLS rule in
- * dsh's hands.
- */
-function mintDshCookie(
+function handleLogin(
+  ctx: Context,
   connection: HostConnectionHandle,
   authorizeIndex: HostConnectionHandle["authorizeIndex"],
+  passcode: string,
+  attempts: Attempts,
   request: IncomingMessage,
-): string | undefined {
-  const token = new URL(
-    connection.authenticatedUrl("http://dsh.invalid"),
-  ).searchParams.get("token");
-  if (token === null) {
-    return undefined;
+  response: ServerResponse,
+): Promise<void> | void {
+  if (untrusted(connection, request, response)) {
+    return;
   }
-  const captured = capture();
-  authorizeIndex(
-    {
-      method: "GET",
-      url: `/?token=${encodeURIComponent(token)}`,
-      headers: request.headers,
-    },
-    captured,
-  );
-  const cookie = captured.headers["set-cookie"];
-  return typeof cookie === "string" ? cookie : undefined;
-}
-
-function cookieName(cookie: string): string | undefined {
-  const separator = cookie.indexOf("=");
-  return separator <= 0 ? undefined : cookie.slice(0, separator);
+  if (loggedIn(connection, request)) {
+    redirect(response, "/");
+    return;
+  }
+  if (request.method === "GET" || request.method === "HEAD") {
+    const body = loginPage(undefined);
+    sendHtml(response, 200, request.method === "HEAD" ? "" : body);
+    return;
+  }
+  if (request.method !== "POST") {
+    sendText(response, 405, "method not allowed\n", {
+      allow: "GET, HEAD, POST",
+    });
+    return;
+  }
+  if (!isForm(request)) {
+    sendText(response, 415, "expected a form submission\n");
+    return;
+  }
+  return readForm(request)
+    .then((form) => {
+      const given = form.get("passcode") ?? "";
+      if (!passcodeMatches(given, passcode)) {
+        const wait = attempts.fail(peerOf(request));
+        if (wait > 0) {
+          sendText(response, 429, "too many attempts\n", {
+            "retry-after": String(wait),
+          });
+          return;
+        }
+        sendHtml(response, 401, loginPage("Wrong passcode."));
+        return;
+      }
+      attempts.clear(peerOf(request));
+      const cookie = mintDshCookie(connection, authorizeIndex, request);
+      if (cookie === undefined) {
+        sendText(response, 500, "sign-in failed\n");
+        return;
+      }
+      redirect(response, "/", { "set-cookie": cookie });
+    })
+    .catch((error: unknown) => {
+      if (error instanceof RangeError) {
+        sendText(response, 413, "form body too large\n");
+        return;
+      }
+      ctx.logger.warn(
+        `${name}: sign-in failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      sendText(response, 500, "sign-in failed\n");
+    });
 }
 
 /**
@@ -322,165 +263,27 @@ export function apply(ctx: Context, config?: PasscodeAuthConfig): void {
   const authorizeIndex = connection.authorizeIndex.bind(connection);
   const attempts = new Attempts();
 
-  /**
-   * Authenticated requests return undefined; untrusted authorities return 403.
-   * A trusted but logged-out request returns 401 and may use the login form.
-   */
-  function untrusted(
-    request: IncomingMessage,
-    response: ServerResponse,
-  ): boolean {
-    if (connection.requestRejection(request) === 403) {
-      sendText(response, 403, "forbidden\n");
-      return true;
-    }
-    return false;
-  }
-
-  function loggedIn(request: IncomingMessage): boolean {
-    return connection.requestRejection(request) === undefined;
-  }
-
-  function handleLogin(
-    request: IncomingMessage,
-    response: ServerResponse,
-  ): Promise<void> | void {
-    if (untrusted(request, response)) {
-      return;
-    }
-    if (loggedIn(request)) {
-      redirect(response, "/");
-      return;
-    }
-    if (request.method === "GET" || request.method === "HEAD") {
-      const body = loginPage(undefined);
-      sendHtml(response, 200, request.method === "HEAD" ? "" : body);
-      return;
-    }
-    if (request.method !== "POST") {
-      sendText(response, 405, "method not allowed\n", {
-        allow: "GET, HEAD, POST",
-      });
-      return;
-    }
-    if (!isForm(request)) {
-      sendText(response, 415, "expected a form submission\n");
-      return;
-    }
-    return readForm(request)
-      .then((form) => {
-        const given = form.get("passcode") ?? "";
-        if (!passcodeMatches(given, passcode)) {
-          const wait = attempts.fail(peerOf(request));
-          if (wait > 0) {
-            sendText(response, 429, "too many attempts\n", {
-              "retry-after": String(wait),
-            });
-            return;
-          }
-          sendHtml(response, 401, loginPage("Wrong passcode."));
-          return;
-        }
-        attempts.clear(peerOf(request));
-        const cookie = mintDshCookie(connection, authorizeIndex, request);
-        if (cookie === undefined) {
-          sendText(response, 500, "sign-in failed\n");
-          return;
-        }
-        redirect(response, "/", { "set-cookie": cookie });
-      })
-      .catch((error: unknown) => {
-        if (error instanceof RangeError) {
-          sendText(response, 413, "form body too large\n");
-          return;
-        }
-        ctx.logger.warn(
-          `${name}: sign-in failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        sendText(response, 500, "sign-in failed\n");
-      });
-  }
-
-  function handleLogout(
-    request: IncomingMessage,
-    response: ServerResponse,
-  ): void {
-    if (untrusted(request, response)) {
-      return;
-    }
-    if (request.method !== "GET" && request.method !== "HEAD") {
-      sendText(response, 405, "method not allowed\n", { allow: "GET, HEAD" });
-      return;
-    }
-    if (!loggedIn(request)) {
-      redirect(response, LOGIN_PATH);
-      return;
-    }
-    // dsh has no logout; its cookie name is part of its private format. Mint
-    // one through the same public exchange only to learn the name, then expire
-    // it in the browser.
-    const cookie = mintDshCookie(connection, authorizeIndex, request);
-    const name = cookie === undefined ? undefined : cookieName(cookie);
-    if (name === undefined) {
-      redirect(response, LOGIN_PATH);
-      return;
-    }
-    redirect(response, LOGIN_PATH, {
-      "set-cookie": `${name}=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict; Expires=Thu, 01 Jan 1970 00:00:00 GMT`,
-    });
-  }
-
-  ctx.effect(() => {
-    connection.authorizeIndex = function (request, response) {
-      if (request.method === "GET" || request.method === "HEAD") {
-        if (hasLaunchToken(request as IncomingMessage)) {
-          redirect(response as ServerResponse, LOGIN_PATH);
-          return false;
-        }
-        const probe = capture();
-        if (authorizeIndex(request, probe)) {
-          return true;
-        }
-        if (probe.status === 401) {
-          redirect(response as ServerResponse, LOGIN_PATH);
-          return false;
-        }
-        const status = probe.status === 0 ? 500 : probe.status;
-        (response as ServerResponse).writeHead(status, probe.headers);
-        (response as ServerResponse).end();
-        return false;
-      }
-      const probe = capture();
-      if (authorizeIndex(request, probe)) {
-        return true;
-      }
-      const status = probe.status === 0 ? 401 : probe.status;
-      (response as ServerResponse).writeHead(status, probe.headers);
-      (response as ServerResponse).end();
-      return false;
-    };
-    return () => {
-      connection.authorizeIndex = authorizeIndex;
-    };
-  }, `${name}: index gate`);
+  installIndexGate(ctx, LOGIN_PATH, authorizeIndex);
+  installHealth(ctx);
 
   ctx.effect(
     () =>
       ctx.webServer.register({
         kind: "exact",
         path: LOGIN_PATH,
-        handler: (request, response) => handleLogin(request, response),
+        handler: (request, response) =>
+          handleLogin(
+            ctx,
+            connection,
+            authorizeIndex,
+            passcode,
+            attempts,
+            request,
+            response,
+          ),
       }),
     `${name}: ${LOGIN_PATH} route`,
   );
 
-  ctx.effect(
-    () =>
-      ctx.webServer.register({
-        kind: "exact",
-        path: LOGOUT_PATH,
-        handler: (request, response) => handleLogout(request, response),
-      }),
-    `${name}: ${LOGOUT_PATH} route`,
-  );
+  installLogout(ctx, LOGIN_PATH, authorizeIndex);
 }

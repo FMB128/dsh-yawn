@@ -416,31 +416,24 @@ provides.
 
 Two authentication modules are not part of the bundle patch.
 
-`@zhming0/dsh-yawn/passcode-auth` is the product's sign-in. Mounted as a row, it
-serves `/login` and `/logout`, and wraps `ctx.connection.authorizeIndex`: a
-browser without dsh's cookie is sent to `/login`; a correct passcode makes the
-row call dsh's own `authenticatedUrl()` and `authorizeIndex()` on the server, so
-the launch token never reaches the browser and dsh still mints the cookie. It
-uses only dsh's public connection surface — no cookie signing, no private
-fields — and refuses `?token=` on the index while mounted. The passcode comes
-from `DSH_YAWN_PASSCODE`; the image mounts the row only when that variable is
-set, and the entrypoint rejects it alongside the launch-token route. The dsh
-seam this rides on (a root token request through `authorizeIndex` mints a cookie
-`admit` accepts) is pinned by `tests/passcode-auth-dsh.test.ts`.
+`@zhming0/dsh-yawn/passcode-auth` and `@zhming0/dsh-yawn/oidc-auth` are the
+product's two sign-in modes; `src/auth-core.ts` holds what they share. Both rows serve `/login` and `/logout`, and wrap
+`ctx.connection.authorizeIndex`: a browser without dsh's cookie is sent to
+`/login`; a successful sign-in makes the row call dsh's own
+`authenticatedUrl()` and `authorizeIndex()` on the server, so the launch token
+never reaches the browser and dsh still mints the cookie. They use only dsh's
+public connection surface — no cookie signing, no private fields — and refuse
+`?token=` on the index while mounted. The dsh seam this rides on (a root token
+request through `authorizeIndex` mints a cookie `admit` accepts) is pinned by
+`tests/passcode-auth-dsh.test.ts`.
 
-`@zhming0/dsh-yawn/launch-token` is break-glass only. Mounted as a row, it
-serves `GET /launch-token`, which redirects the browser to dsh's tokenized login
-URL. It is not a sign-in: anyone who reaches dsh's port can use it. The
-control-plane image mounts it only when `DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1`;
-the Helm chart uses it for the oauth2-proxy path until the OIDC handoff lands,
-and otherwise only when `controlPlane.launchToken` is explicitly set. To mount
-it yourself, insert the row in a patch layer:
-
-```yaml
-- insert:
-    - id: sandbox-launch-token
-      name: "@zhming0/dsh-yawn/launch-token"
-```
+The passcode row reads `DSH_YAWN_PASSCODE`. The OIDC row reads
+`DSH_YAWN_OIDC_*`, runs the authorization code flow with PKCE, state, and a
+nonce in the control-plane process, and accepts only the configured emails or
+domains. Both rows also register `/healthz`, which reports the
+row is mounted without contacting the identity provider. It replaces the former oauth2-proxy sidecar and `/launch-token`
+shortcut, both of which are gone. The image entrypoint mounts exactly one row
+and refuses to start without a sign-in mode.
 
 A second module rides in the bundle patch itself: `@zhming0/dsh-yawn/owns-host`.
 It injects `__DSH_TRANSPORT__ = { ownsHost: true }` into the served index, which
@@ -463,9 +456,8 @@ belongs in the image and the run command needs no `--group-add`. A pod that sets
 `runAsUser`, as the Helm chart does, skips the drop and never starts as root.
 
 `DSH_YAWN_BIND_ALL=1` binds the Web UI to the container's own address
-(`hostname -i`) so a published port reaches it; dsh refuses wildcard addresses
-such as `0.0.0.0`. Kubernetes leaves it unset and keeps dsh on pod loopback
-behind oauth2-proxy.
+(`hostname -i`) so a published port or Service reaches it; dsh refuses wildcard
+addresses such as `0.0.0.0`. The Helm chart sets it for both sign-in modes.
 
 The default backend uses Docker on the same machine as dsh. The Kubernetes
 backend uses Kubernetes SIG agent-sandbox. The Buildkite backend runs each

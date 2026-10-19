@@ -11,8 +11,8 @@ Docker daemon.
   before dsh starts, so the command needs no `--group-add` and no host-side
   group lookup.
 - `DSH_YAWN_BIND_ALL=1` makes dsh listen on the container address so the
-  published port reaches the Web UI. `DSH_YAWN_PASSCODE` turns on the passcode
-  login; without a passcode the UI falls back to dsh's startup token.
+  published port reaches the Web UI. `DSH_YAWN_PASSCODE` is the passcode login;
+  the image refuses to start without a sign-in mode.
 - The sandbox profile needs only `backend: docker`: the runner image defaults
   to the tag matching the control plane, and runners dial back through
   `host.docker.internal` on the published tunnel port 8081.
@@ -27,14 +27,16 @@ after a correct passcode, completes dsh's own token exchange on the server. The
 launch token never reaches the browser, and the dsh cookie lasts 30 days, so a
 browser signs in once.
 
-The Helm chart can use oauth2-proxy and an OIDC provider instead: set
-`oidc.enabled` and leave `auth.passcode` empty. In that mode the proxy is the
-sign-in, and the chart still mounts `/launch-token` until the OIDC handoff lands.
+The Helm chart can use OIDC instead: set `auth.mode=oidc` and configure
+`auth.oidc.issuer`, `clientId`, and an email or domain allowlist. The control
+plane runs the authorization code flow itself; there is no oauth2-proxy sidecar.
 
-`/launch-token` is otherwise break-glass only: `controlPlane.launchToken` (Helm)
-or `DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1` (Docker) mounts a route that
-hands dsh's process token to anyone who can reach the port. It is off by
-default and cannot be combined with a passcode.
+`email_verified: false` or a missing claim is accepted by default; set
+`auth.oidc.allowUnverifiedEmail=false` if the issuer must assert `true`.
+
+The `/launch-token` route has been removed, and `?token=` on the index is
+refused in both modes. dsh's launch token still exists inside the process as the
+credential its cookie minting needs; users never see or provide it.
 Details: [`control-plane.md`](control-plane.md#expose-the-web-ui).
 
 ### What is a sandbox's lifecycle like?
