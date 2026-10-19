@@ -417,15 +417,20 @@ provides.
 Two authentication modules are not part of the bundle patch.
 
 `@zhming0/dsh-yawn/passcode-auth` and `@zhming0/dsh-yawn/oidc-auth` are the
-product's two sign-in modes; `src/auth-core.ts` holds what they share. Both rows serve `/login` and `/logout`, and wrap
-`ctx.connection.authorizeIndex`: a browser without dsh's cookie is sent to
-`/login`; a successful sign-in makes the row call dsh's own
-`authenticatedUrl()` and `authorizeIndex()` on the server, so the launch token
-never reaches the browser and dsh still mints the cookie. They use only dsh's
-public connection surface — no cookie signing, no private fields — and refuse
-`?token=` on the index while mounted. The dsh seam this rides on (a root token
-request through `authorizeIndex` mints a cookie `admit` accepts) is pinned by
-`tests/passcode-auth-dsh.test.ts`.
+product's two sign-in modes; `src/auth-core.ts` holds what they share. Both rows
+serve `/login` and `/logout`, and wrap `ctx.connection.authorizeIndex`: a
+browser without dsh's cookie is sent to `/login`; a successful sign-in makes the
+row call dsh's own `authenticatedUrl()` and `authorizeIndex()` on the server, so
+the launch token never reaches the browser and dsh still mints the cookie. They
+use only dsh's public connection surface — no cookie signing, no private fields
+— and refuse `?token=` on the index while mounted. The dsh seam this rides on (a
+root token request through `authorizeIndex` mints a cookie `admit` accepts) is
+pinned by `tests/passcode-auth-dsh.test.ts`.
+
+The client bundle takes dsh's generic `settings.launcher` seat, so the sidebar
+foot offers a **More** menu with Settings and Sign out. `installLogout`
+advertises `/logout` as the `__DSH_YAWN_AUTH__` index global; a profile with no
+sign-in row keeps dsh's plain Settings trigger.
 
 The passcode row reads `DSH_YAWN_PASSCODE`. The OIDC row reads
 `DSH_YAWN_OIDC_*`, runs the authorization code flow with PKCE, state, and a
